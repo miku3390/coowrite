@@ -20,6 +20,10 @@ LEAVES = os.path.join(BASE, "leaves.json")
 CONTINUE_SIGNAL = os.path.join(DATA, "continue.signal")
 CONTINUE_ACK = os.path.join(DATA, "continue.ack.json")
 SIGNAL_TTL = 60.0  # 秒：过期信号不再消费
+CUSTOM_PRESETS = os.path.join(DATA, "custom_presets.json")   # 全局自定义方案（跨项目）
+BACKUP_KEEP = 5        # draft_backup.md 历史轮转保留版数（.1~.4 + 最新）
+DIFFS_KEEP = 200       # diffs.json 最多保留条数
+DIFF_OPS_KEEP = 500    # 单条 diff 的 ops 上限（超过记 truncated）
 
 # 每个项目目录内的数据文件
 PROJ_FILES = ["draft.md", "draft_backup.md", "diffs.json", "plan.json",
@@ -91,8 +95,24 @@ def read_draft(pid):
         return ""
 
 def write_draft(pid, text):
+    """写草稿前做历史轮转，保留 BACKUP_KEEP 版备份：
+    draft_backup.md(最新) ← draft_backup.1.md ← .2 … ← .(KEEP-1)(最旧，落盘前丢弃)。"""
     p = fpath(pid, "draft.md")
     if os.path.exists(p):
+        # 最旧一份直接丢弃
+        oldest = fpath(pid, f"draft_backup.{BACKUP_KEEP - 1}.md")
+        if os.path.exists(oldest):
+            os.remove(oldest)
+        # 从旧到新依次后移：.N → .(N+1)
+        for i in range(BACKUP_KEEP - 2, 0, -1):
+            src = fpath(pid, f"draft_backup.{i}.md")
+            if os.path.exists(src):
+                shutil.move(src, fpath(pid, f"draft_backup.{i + 1}.md"))
+        # 最新备份 draft_backup.md → .1
+        cur = fpath(pid, "draft_backup.md")
+        if os.path.exists(cur):
+            shutil.move(cur, fpath(pid, "draft_backup.1.md"))
+        # 当前草稿 → 最新备份
         shutil.copy(p, fpath(pid, "draft_backup.md"))
     with open(p, "w", encoding="utf-8") as f:
         f.write(text)
@@ -167,6 +187,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(load_json(fpath(pid, "diffs.json"), []) if pid else [], ensure_ascii=False))
         elif path == "/api/leaves":
             self._send(200, json.dumps(load_json(LEAVES, {}), ensure_ascii=False))
+        elif path == "/api/presets":
+            self._send(200, json.dumps({"custom": load_json(CUSTOM_PRESETS, [])}, ensure_ascii=False))
         elif path == "/api/outline":
             self._send(200, json.dumps(load_json(fpath(pid, "outline.json"), {}) if pid else {}, ensure_ascii=False))
         elif path == "/api/changes":
@@ -208,12 +230,21 @@ class Handler(BaseHTTPRequestHandler):
             text = body.get("draft", "")
             prev = read_draft(pid)
             write_draft(pid, text)
-            sm = difflib.SequenceMatcher(None, prev.splitlines(), text.splitlines())
-            ops = [{"tag": op, "a": prev.splitlines()[i1:i2], "b": text.splitlines()[j1:j2]}
+            prev_lines = prev.splitlines()
+            new_lines = text.splitlines()
+            sm = difflib.SequenceMatcher(None, prev_lines, new_lines)
+            ops = [{"tag": op, "a": prev_lines[i1:i2], "b": new_lines[j1:j2]}
                    for op, i1, i2, j1, j2 in sm.get_opcodes() if op != "equal"]
+            # ops 不再截 20，保住改动信息；仅对极端情况设上限并留 truncated 标志
+            truncated = len(ops) > DIFF_OPS_KEEP
+            if truncated:
+                ops = ops[:DIFF_OPS_KEEP]
             diffs = load_json(fpath(pid, "diffs.json"), [])
             diffs.append({"t": time.strftime("%H:%M:%S"), "round": body.get("round", 0),
-                          "ops": ops[:20]})
+                          "ops": ops, "truncated": truncated})
+            # diffs.json 限容：只留最近 DIFFS_KEEP 条
+            if len(diffs) > DIFFS_KEEP:
+                diffs = diffs[-DIFFS_KEEP:]
             save_json(fpath(pid, "diffs.json"), diffs)
             self._send(200, {"ok": True, "diff_count": len(ops)})
         elif path == "/api/plan":
@@ -255,6 +286,22 @@ class Handler(BaseHTTPRequestHandler):
                    "err": body.get("err", ""), "ts": time.time()}
             save_json(CONTINUE_ACK, ack)
             self._send(200, {"ok": True})
+        elif path == "/api/presets":
+            # 保存 {name, desc, tags[], leaves{}} 覆盖同名；或 {delete: name} 删除
+            custom = load_json(CUSTOM_PRESETS, [])
+            if body.get("delete"):
+                custom = [p for p in custom if p.get("name") != body["delete"]]
+            else:
+                name = str(body.get("name", "")).strip()
+                if not name:
+                    self._send(400, {"error": "name required"})
+                    return
+                entry = {"name": name, "desc": str(body.get("desc", "")),
+                         "tags": body.get("tags", []) or [],
+                         "leaves": body.get("leaves", {}) or {}}
+                custom = [p for p in custom if p.get("name") != name] + [entry]
+            save_json(CUSTOM_PRESETS, custom)
+            self._send(200, {"custom": custom})
         elif path == "/api/changes":
             if not pid:
                 self._send(400, {"error": "no active project"})

@@ -336,6 +336,29 @@
   .budget-mini .bar { height: 5px; border-radius: 3px; background: rgba(0,0,0,.08); margin: 4px 0 8px; overflow: hidden; }
   .budget-mini .bar i { display: block; height: 100%; background: var(--conc); border-radius: 3px; transition: width .3s; }
 
+  /* ---------- 字数统计 / diff 面板 / 导出 ---------- */
+  #wordCount { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .diff-panel { font-size: 11.5px; max-height: 340px; overflow-y: auto; }
+  .diff-entry { margin-bottom: 12px; }
+  .diff-meta { font-size: 10.5px; color: var(--sub); margin-bottom: 4px; }
+  .diff-line { padding: 2px 6px; border-radius: 4px; margin: 1px 0; white-space: pre-wrap; word-break: break-all; cursor: pointer; }
+  .diff-line:hover { filter: brightness(.94); }
+  .diff-line.add { background: rgba(52,199,89,.12); color: #1d7a36; }
+  .diff-line.add::before { content: '+ '; font-weight: 700; }
+  .diff-line.del { background: rgba(200,50,80,.1); color: var(--accent); }
+  .diff-line.del::before { content: '- '; font-weight: 700; }
+  .diff-line.rep { background: rgba(42,111,151,.1); color: var(--qual); }
+  .diff-line.rep::before { content: '± '; font-weight: 700; }
+  .diff-empty { font-size: 11.5px; color: var(--sub); }
+  .export-row { display: flex; flex-direction: column; gap: 8px; }
+  .custom-preset-box { margin-top: 4px; }
+  .custom-preset { display: flex; align-items: center; gap: 6px; padding: 5px 0; }
+  .custom-preset .cp-name { font-size: 12px; font-weight: 600; cursor: pointer; }
+  .custom-preset .cp-name:hover { color: var(--accent); }
+  .custom-preset .cp-x { font-size: 11px; color: var(--sub); cursor: pointer; padding: 0 4px; border-radius: 4px; }
+  .custom-preset .cp-x:hover { background: rgba(0,0,0,.08); color: var(--accent); }
+
+
   /* ---------- 悬浮操作卡片 ---------- */
   .float-card {
     position: fixed;
@@ -484,6 +507,15 @@
         <div class="preset-list" id="presetList"></div>
       </div>
 
+      <div class="preset-box custom-preset-box">
+        <h4>自定义方案 <small style="color:var(--sub);font-weight:400">（保存当前档位为方案）</small></h4>
+        <div id="customPresetList" class="diff-empty">（暂无）</div>
+        <div class="tag-add-row">
+          <input id="presetNameInput" placeholder="方案名，回车保存" onkeydown="if(event.key==='Enter')saveCustomPreset()">
+          <button class="btn small ghost" onclick="saveCustomPreset()">保存当前档位</button>
+        </div>
+      </div>
+
       <div class="tag-box">
         <h4>标签 <small style="color:var(--sub);font-weight:400">（决定称号匹配与类别约束，可多选）</small></h4>
         <div class="tag-list" id="tagList"></div>
@@ -520,11 +552,25 @@
       <div class="editor-head">
         <span class="scene-tag" id="sceneTag">未开始</span>
         <span class="hint" id="sceneName">（等待第一段）</span>
+        <span class="hint" id="wordCount">0 字</span>
       </div>
       <div class="tabs-bar" id="tabsBar"></div>
-      <textarea id="editor" placeholder="（等待 AI 写入第一段……）"></textarea>
+      <textarea id="editor" placeholder="（等待 AI 写入第一段……）" oninput="updateWordCount()"></textarea>
     </div>
+    <div class="side">
+      <div class="card">
+        <h3>最近改动</h3>
+        <div id="diffPanel" class="diff-panel"><span class="diff-empty">保存后这里显示改动</span></div>
+      </div>
+      <div class="card">
+        <h3>导出</h3>
+        <div class="export-row">
+          <button class="btn small" onclick="exportDraft(false)">导出成稿（去标记）</button>
+          <button class="btn small ghost" onclick="exportDraft(true)">导出工作稿（留标记）</button>
+        </div>
+      </div>
     </div>
+  </div>
 </div>
 
 <!-- ============ 叶子调整弹窗 ============ -->
@@ -813,6 +859,9 @@ function renderPresets() {
 function applyPreset(name) {
   const p = leaves.presets.find(x => x.name === name);
   if (!p) return;
+  applyPresetObj(p);
+}
+function applyPresetObj(p) {
   planSel = Object.assign({}, p.leaves);
   // 标签替换为 preset 推荐（不保留旧标签）
   tags = (p.tags || []).slice();
@@ -828,6 +877,41 @@ function resetLeaves() {
   checkConflicts();
 }
 
+// ---------- 自定义方案 ----------
+let customPresets = [];
+async function loadCustomPresets() {
+  const r = await api('/api/presets');
+  customPresets = (r && r.custom) || [];
+  renderCustomPresets();
+}
+function renderCustomPresets() {
+  const el = $('#customPresetList');
+  if (!el) return;
+  if (!customPresets.length) { el.innerHTML = '<span class="diff-empty">（暂无）</span>'; return; }
+  el.innerHTML = customPresets.map(p =>
+    `<div class="custom-preset">
+       <span class="cp-name" onclick="applyCustomPreset('${p.name.replace(/'/g, "\\'")}')">${p.name}</span>
+       <span class="cp-x" onclick="deleteCustomPreset('${p.name.replace(/'/g, "\\'")}')">✕</span>
+     </div>`
+  ).join('');
+}
+async function saveCustomPreset() {
+  const name = $('#presetNameInput').value.trim();
+  if (!name) { $('#presetNameInput').focus(); return; }
+  await api('/api/presets', 'POST', { name, desc: '自定义方案', tags: tags.slice(), leaves: Object.assign({}, planSel) });
+  $('#presetNameInput').value = '';
+  await loadCustomPresets();
+}
+function applyCustomPreset(name) {
+  const p = customPresets.find(x => x.name === name);
+  if (!p) return;
+  applyPresetObj(p);
+}
+async function deleteCustomPreset(name) {
+  await api('/api/presets', 'POST', { delete: name });
+  await loadCustomPresets();
+}
+
 // ---------- 叶子选型页 ----------
 async function loadLeavesView() {
   if (!leaves) leaves = await api('/api/leaves');
@@ -836,6 +920,7 @@ async function loadLeavesView() {
   const st = await api('/api/state');
   tags = (st.tags || []).slice();
   renderPresets();
+  loadCustomPresets();
   renderTags();
   renderLeafList('#leavesBody');
 }
@@ -851,6 +936,7 @@ async function savePlan() {
 let draft = '';
 let segs = [];       // 段落：[{start, end, from, to}]
 let activeTab = 0;   // 当前活动标签
+let projectName = '未命名文章';
 
 function parseSegments(text) {
   const re = /<!--\s*\[SCENE:[^\]]+\]\s*-->/g;
@@ -890,11 +976,111 @@ function activateTab(i) {
   activeTab = i;
   renderTabs();
   if (segs[i]) $('#editor').value = segs[i].content;
+  updateWordCount();
 }
+
+// ---------- 字数统计 ----------
+function currentFullText() {
+  // 全文 = 各段拼接；活动段取 textarea 当前值（尚未存回 segs 的编辑态）
+  return segs.map((s, i) => i === activeTab ? $('#editor').value : s.content).join('');
+}
+function updateWordCount() {
+  const segLen = $('#editor').value.length;
+  const fullLen = currentFullText().length;
+  $('#wordCount').textContent = `本段 ${segLen} 字 · 全文 ${fullLen} 字`;
+}
+
+// ---------- diff 面板 + 跳转 ----------
+async function renderDiffs() {
+  const el = $('#diffPanel');
+  if (!el) return;
+  let list = [];
+  try { list = await api('/api/diffs'); } catch (e) { list = []; }
+  const recent = (Array.isArray(list) ? list : []).slice(-5).reverse();
+  if (!recent.length) { el.innerHTML = '<span class="diff-empty">（暂无改动记录）</span>'; return; }
+  el.innerHTML = recent.map((d, di) => {
+    const ops = (d.ops || []).map((op, oi) =>
+      op.b.map((line, li) =>
+        `<div class="diff-line ${op.tag === 'insert' ? 'add' : op.tag === 'delete' ? 'del' : 'rep'}" onclick="jumpToDiff(${di},${oi},${li})">${escapeHtml(line) || '&nbsp;'}</div>`
+      ).join('') +
+      (op.tag === 'delete' ? op.a.map((line, li) =>
+        `<div class="diff-line del" onclick="jumpToDiff(${di},${oi},${li},true)">${escapeHtml(line) || '&nbsp;'}</div>`
+      ).join('') : '')
+    ).join('');
+    const trunc = d.truncated ? ' ·（部分截断）' : '';
+    return `<div class="diff-entry"><div class="diff-meta">${d.t || ''} · 第 ${d.round || 0} 回合${trunc}</div>${ops}</div>`;
+  }).join('');
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+async function jumpToDiff(di, oi, li, isDel) {
+  // 把点击的 diff 行还原到当前全文的行号 → 段 → 光标定位
+  const target = await diffLines(di, oi, li, isDel);
+  if (target == null) return;
+  const full = currentFullText();
+  const lines = full.split('\n');
+  // 顺序贪心匹配：找到 target 行在全文中的行号
+  let fullIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] === target) { fullIdx = i; break; }
+  }
+  if (fullIdx < 0) return;
+  // 行号 → 字符偏移 → 段
+  let off = 0;
+  for (let i = 0; i < fullIdx; i++) off += lines[i].length + 1;
+  // 找段：segs 是按 start 切分的内容，但 activeTab 编辑态可能改变长度——用 draft 基准偏移
+  const base = draft;
+  const segArr = parseSegments(base);
+  for (let si = 0; si < segArr.length; si++) {
+    if (off >= segArr[si].start && off < segArr[si].end) {
+      activateTab(si);
+      const localOff = off - segArr[si].start;
+      const ta = $('#editor');
+      ta.focus();
+      ta.setSelectionRange(localOff, localOff);
+      return;
+    }
+  }
+}
+// 缓存最近 diff 的 ops 顺序数组，供 jumpToDiff 反查行
+let _diffOpsCache = [];
+async function diffLines(di, oi, li, isDel) {
+  try { _diffOpsCache = await api('/api/diffs'); } catch (e) { _diffOpsCache = []; }
+  const recent = (Array.isArray(_diffOpsCache) ? _diffOpsCache : []).slice(-5).reverse();
+  const d = recent[di];
+  if (!d || !d.ops || !d.ops[oi]) return null;
+  const op = d.ops[oi];
+  return isDel ? (op.a[li] != null ? op.a[li] : null) : (op.b[li] != null ? op.b[li] : null);
+}
+
+// ---------- 导出 ----------
+function exportDraft(keepMarkers) {
+  const full = currentFullText();
+  if (!full.trim()) { $('#statusText').textContent = '没有可导出的内容'; return; }
+  let out = full;
+  if (!keepMarkers) out = full.replace(/<!--\s*\[SCENE:[^\]]*\]\s*-->\n?/g, '');
+  const name = (projectName || '未命名文章').replace(/[\\/:*?"<>|]/g, '_');
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  const filename = `${name}-${keepMarkers ? '工作稿' : '成稿'}-${stamp}.md`;
+  const blob = new Blob([out], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function initEditor() {
   state = await api('/api/state');
   const d = await api('/api/draft');
   draft = d.draft || '';
+  // 存 active 项目名（导出文件名用）
+  try {
+    const p = await api('/api/projects');
+    const act = (p.items || []).find(it => it.id === p.active);
+    projectName = act ? act.name : '未命名文章';
+  } catch (e) { projectName = '未命名文章'; }
   // 加载叶子预算（无条件赋值：空项目时也要清空 planSel，别残留上一篇文章的档位）
   const saved = await api('/api/plan');
   planSel = Object.assign({}, saved);
@@ -904,6 +1090,8 @@ async function initEditor() {
   $('#editor').value = segs.length ? segs[activeTab].content : '';
   $('#sceneTag').textContent = state.scene || '未开始';
   $('#sceneName').textContent = state.scene ? '' : '（等待第一段）';
+  updateWordCount();
+  renderDiffs();
   markUnsaved();
 }
 function markUnsaved() { $('#statusText').textContent = '有未保存修改'; $('#statusDot').style.background = 'var(--warn)'; }
@@ -919,6 +1107,8 @@ async function saveAll() {
   if (activeTab >= segs.length) activeTab = segs.length - 1;
   renderTabs();
   $('#editor').value = segs.length ? segs[activeTab].content : '';
+  updateWordCount();
+  renderDiffs();
   markSaved();
   const contText = `继续协同写作：第 ${state.round || 0} 回合「${state.scene || '（未命名）'}」。请读取最新稿子（draft.md）续写下一段，写回后告诉我。`;
   if (window.workbenchBridge?.continue) {
