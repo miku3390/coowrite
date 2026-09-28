@@ -7,7 +7,7 @@
 - 纯标准库，零依赖
 启动：python3 server.py [端口]  (默认 8338)
 """
-import json, os, re, sys, time, difflib, shutil, uuid
+import json, os, re, sys, time, difflib, shutil, uuid, sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, unquote
 
@@ -24,6 +24,10 @@ CUSTOM_PRESETS = os.path.join(DATA, "custom_presets.json")   # 全局自定义�
 BACKUP_KEEP = 5        # draft_backup.md 历史轮转保留版数（.1~.4 + 最新）
 DIFFS_KEEP = 200       # diffs.json 最多保留条数
 DIFF_OPS_KEEP = 500    # 单条 diff 的 ops 上限（超过记 truncated）
+
+# Hermes 状态观察（只读）：gateway_state.json + state.db 都在 HERMES_HOME 下
+HERMES_HOME = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+HERMES_ACTIVE_WINDOW = 300.0   # 秒：最后消息距今 < 该值且非 stop 视为「写作中」
 
 # 每个项目目录内的数据文件
 PROJ_FILES = ["draft.md", "draft_backup.md", "diffs.json", "plan.json",
@@ -117,6 +121,64 @@ def write_draft(pid, text):
     with open(p, "w", encoding="utf-8") as f:
         f.write(text)
 
+# ---------- Hermes 状态观察（只读） ----------
+def read_hermes_status():
+    """读 Hermes gateway 与最新 session 状态，供前端状态卡轮询。任何失败都降级为 available:false。"""
+    out = {"available": False, "status": "unknown", "gateway": None,
+           "round": 0, "session": None}
+    try:
+        # 1) gateway_state.json
+        gw_path = os.path.join(HERMES_HOME, "gateway_state.json")
+        if os.path.exists(gw_path):
+            gw = load_json(gw_path, {})
+            out["gateway"] = gw.get("gateway_state")
+        # 2) state.db 最新未结束 session + 最后一条消息
+        db_path = os.path.join(HERMES_HOME, "state.db")
+        if not os.path.exists(db_path):
+            return out
+        conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3)
+        try:
+            cur = conn.cursor()
+            row = cur.execute(
+                "SELECT id, title, message_count, input_tokens, output_tokens, last_activity_at, last_activity_description "
+                "FROM sessions WHERE ended_at IS NULL ORDER BY last_activity_at DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return out
+            sid, title, mc, it, ot, last_act_at, last_desc = row
+            msg = cur.execute(
+                "SELECT role, finish_reason, content, timestamp FROM messages "
+                "WHERE session_id=? ORDER BY id DESC LIMIT 1", (sid,)
+            ).fetchone()
+            out["available"] = True
+            out["session"] = {
+                "title": (title or "")[:120],
+                "message_count": mc or 0,
+                "input_tokens": it or 0,
+                "output_tokens": ot or 0,
+                "last_finish": None,
+                "last_content": "",
+                "last_activity": last_desc or "",
+            }
+            if msg:
+                role, finish, content, ts = msg
+                out["session"]["last_finish"] = finish
+                if role == "assistant" and content:
+                    out["session"]["last_content"] = content[:80]
+                # 状态判定：最后消息在活跃窗口内且未 stop → 写作中
+                if ts is not None and (time.time() - ts) < HERMES_ACTIVE_WINDOW and finish != "stop":
+                    out["status"] = "writing"
+                else:
+                    out["status"] = "idle"
+            else:
+                out["status"] = "idle"
+        finally:
+            conn.close()
+        return out
+    except Exception:
+        return {"available": False, "status": "unknown", "gateway": None,
+                "round": 0, "session": None}
+
 # ---------- 续写信令 ----------
 def take_continue_signal():
     """原子消费一条续写信号：先改名为临时文件再读，避免并发双消费。过期信号视为无信号。"""
@@ -189,6 +251,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(load_json(LEAVES, {}), ensure_ascii=False))
         elif path == "/api/presets":
             self._send(200, json.dumps({"custom": load_json(CUSTOM_PRESETS, [])}, ensure_ascii=False))
+        elif path == "/api/hermes-status":
+            st = read_hermes_status()
+            if st.get("available") and pid:
+                st["round"] = load_json(fpath(pid, "state.json"), {}).get("round", 0) or 0
+            self._send(200, st)
         elif path == "/api/outline":
             self._send(200, json.dumps(load_json(fpath(pid, "outline.json"), {}) if pid else {}, ensure_ascii=False))
         elif path == "/api/changes":

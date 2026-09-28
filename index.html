@@ -358,6 +358,18 @@
   .custom-preset .cp-x { font-size: 11px; color: var(--sub); cursor: pointer; padding: 0 4px; border-radius: 4px; }
   .custom-preset .cp-x:hover { background: rgba(0,0,0,.08); color: var(--accent); }
 
+  /* ---------- Hermes 状态卡 ---------- */
+  .hermes-status .hs-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .hs-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--sub); flex: none; }
+  .hs-dot.idle { background: var(--ok); }
+  .hs-dot.writing { background: var(--qual); animation: hsPulse 1.2s ease-in-out infinite; }
+  .hs-dot.off { background: var(--warn); }
+  @keyframes hsPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .hs-label { font-size: 12.5px; font-weight: 600; }
+  .hs-meta { font-size: 11px; color: var(--sub); line-height: 1.6; }
+  .hs-preview { font-size: 11px; color: var(--ink); line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 72px; overflow-y: auto; margin-top: 4px; }
+
+
 
   /* ---------- 悬浮操作卡片 ---------- */
   .float-card {
@@ -558,6 +570,12 @@
       <textarea id="editor" placeholder="（等待 AI 写入第一段……）" oninput="updateWordCount()"></textarea>
     </div>
     <div class="side">
+      <div class="card hermes-status">
+        <h3>Hermes 状态</h3>
+        <div class="hs-row"><span class="hs-dot off" id="hsDot"></span><span class="hs-label" id="hsLabel">连接中…</span></div>
+        <div class="hs-meta" id="hsMeta"></div>
+        <div class="hs-preview" id="hsPreview"></div>
+      </div>
       <div class="card">
         <h3>最近改动</h3>
         <div id="diffPanel" class="diff-panel"><span class="diff-empty">保存后这里显示改动</span></div>
@@ -631,7 +649,8 @@ function gotoView(name) {
   VIEWS.forEach(v => document.getElementById('view-' + v).classList.toggle('active', v === name));
   if (name === 'outline') loadOutline();
   if (name === 'leaves') loadLeavesView();
-  if (name === 'editor') initEditor();
+  if (name === 'editor') { initEditor(); startHermesPolling(); }
+  else stopHermesPolling();
 }
 
 // ---------- 项目切换 / 新建 ----------
@@ -988,6 +1007,50 @@ function updateWordCount() {
   const segLen = $('#editor').value.length;
   const fullLen = currentFullText().length;
   $('#wordCount').textContent = `本段 ${segLen} 字 · 全文 ${fullLen} 字`;
+}
+
+// ---------- Hermes 状态轮询 ----------
+let hermesTimer = null;
+function renderHermesStatus(s) {
+  const dot = $('#hsDot'), label = $('#hsLabel'), meta = $('#hsMeta'), prev = $('#hsPreview');
+  if (!dot) return;
+  dot.className = 'hs-dot off'; label.textContent = '状态不可用'; meta.textContent = ''; prev.textContent = '';
+  if (!s || !s.available) {
+    dot.className = 'hs-dot off';
+    label.textContent = '状态不可用';
+    meta.textContent = 'server 需在 WSL 内运行才能读到 Hermes';
+    return;
+  }
+  if (s.status === 'writing') {
+    dot.className = 'hs-dot writing'; label.textContent = '续写中…';
+  } else if (s.status === 'idle') {
+    dot.className = 'hs-dot idle'; label.textContent = '空闲';
+  } else {
+    dot.className = 'hs-dot off'; label.textContent = '未知';
+  }
+  const sess = s.session || {};
+  const parts = [];
+  if (s.round) parts.push(`第 ${s.round} 回合`);
+  if (sess.message_count) parts.push(`${sess.message_count} 条消息`);
+  if (sess.input_tokens || sess.output_tokens) parts.push(`${sess.input_tokens}/${sess.output_tokens} token`);
+  meta.textContent = parts.join(' · ');
+  prev.textContent = sess.last_content ? `正在写：${sess.last_content}` : '';
+}
+async function pollHermesStatus() {
+  try {
+    const s = await api('/api/hermes-status');
+    renderHermesStatus(s);
+  } catch (e) {
+    renderHermesStatus({ available: false });
+  }
+}
+function startHermesPolling() {
+  stopHermesPolling();
+  pollHermesStatus();
+  hermesTimer = setInterval(pollHermesStatus, 2000);
+}
+function stopHermesPolling() {
+  if (hermesTimer) { clearInterval(hermesTimer); hermesTimer = null; }
 }
 
 // ---------- diff 面板 + 跳转 ----------
