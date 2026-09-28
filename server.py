@@ -17,6 +17,7 @@ os.makedirs(DATA, exist_ok=True)
 
 PROJECTS = os.path.join(DATA, "projects.json")
 LEAVES = os.path.join(BASE, "leaves.json")
+CONTINUE_SIGNAL = os.path.join(DATA, "continue.signal")
 
 # 每个项目目录内的数据文件
 PROJ_FILES = ["draft.md", "draft_backup.md", "diffs.json", "plan.json",
@@ -94,6 +95,26 @@ def write_draft(pid, text):
     with open(p, "w", encoding="utf-8") as f:
         f.write(text)
 
+# ---------- 续写信令 ----------
+def poll_continue_signal():
+    """原子消费一条续写信号：先改名为临时文件再读，避免并发双消费。"""
+    tmp = CONTINUE_SIGNAL + ".consuming"
+    try:
+        os.replace(CONTINUE_SIGNAL, tmp)
+    except OSError:
+        return {"text": None}
+    try:
+        with open(tmp, encoding="utf-8") as f:
+            sig = json.load(f)
+    except Exception:
+        sig = {"text": None}
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    return sig
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -143,6 +164,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(load_json(fpath(pid, "outline.json"), {}) if pid else {}, ensure_ascii=False))
         elif path == "/api/changes":
             self._send(200, json.dumps(load_json(fpath(pid, "changes.json"), []) if pid else [], ensure_ascii=False))
+        elif path == "/api/continue-signal/poll":
+            self._send(200, poll_continue_signal())
         else:
             self._send(404, {"error": "not found"})
 
@@ -209,6 +232,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "no active project"})
                 return
             save_json(fpath(pid, "outline.json"), body.get("outline", {}))
+            self._send(200, {"ok": True})
+        elif path == "/api/continue-signal":
+            # 网页「保存并继续」→ 写一条续写信号，供 continue_watcher.py 消费注入 Hermes
+            sig = {"text": str(body.get("text", "")), "round": body.get("round", 0),
+                   "t": time.strftime("%H:%M:%S")}
+            save_json(CONTINUE_SIGNAL, sig)
             self._send(200, {"ok": True})
         elif path == "/api/changes":
             if not pid:

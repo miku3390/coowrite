@@ -913,7 +913,12 @@ async function saveAll() {
   if (activeTab < segs.length) segs[activeTab].content = $('#editor').value;
   const text = segs.map(s => s.content).join('');
   await api('/api/save', 'POST', { draft: text, round: state.round || 0 });
+  // 续写信号：写给 continue_watcher.py（tmux 注入 Hermes）；纯浏览器+watcher 场景用。
+  // Electron 桥存在时两条路都走也不冲突——桌面端有自己的注入逻辑，watcher 不在 tmux 里就不生效。
+  const contText = `继续协同写作：第 ${state.round || 0} 回合「${state.scene || '（未命名）'}」。请读取最新稿子（draft.md）续写下一段，写回后告诉我。`;
+  api('/api/continue-signal', 'POST', { text: contText, round: state.round || 0 }).catch(() => {});
   markSaved();
+  $('#statusText').textContent = '已保存，续写信号已发出';
   draft = text;
   segs = mergeOldest(parseSegments(draft));
   if (activeTab >= segs.length) activeTab = segs.length - 1;
