@@ -18,6 +18,8 @@ os.makedirs(DATA, exist_ok=True)
 PROJECTS = os.path.join(DATA, "projects.json")
 LEAVES = os.path.join(BASE, "leaves.json")
 CONTINUE_SIGNAL = os.path.join(DATA, "continue.signal")
+CONTINUE_ACK = os.path.join(DATA, "continue.ack.json")
+SIGNAL_TTL = 60.0  # 秒：过期信号不再消费
 
 # 每个项目目录内的数据文件
 PROJ_FILES = ["draft.md", "draft_backup.md", "diffs.json", "plan.json",
@@ -96,8 +98,8 @@ def write_draft(pid, text):
         f.write(text)
 
 # ---------- 续写信令 ----------
-def poll_continue_signal():
-    """原子消费一条续写信号：先改名为临时文件再读，避免并发双消费。"""
+def take_continue_signal():
+    """原子消费一条续写信号：先改名为临时文件再读，避免并发双消费。过期信号视为无信号。"""
     tmp = CONTINUE_SIGNAL + ".consuming"
     try:
         os.replace(CONTINUE_SIGNAL, tmp)
@@ -107,13 +109,18 @@ def poll_continue_signal():
         with open(tmp, encoding="utf-8") as f:
             sig = json.load(f)
     except Exception:
-        sig = {"text": None}
+        sig = {}
     finally:
         try:
             os.remove(tmp)
         except OSError:
             pass
-    return sig
+    if not sig.get("text"):
+        return {"text": None}
+    if time.time() - sig.get("ts", 0) > SIGNAL_TTL:
+        return {"text": None, "expired": True}
+    return {"text": sig["text"], "round": sig.get("round", 0),
+            "t": sig.get("t"), "ts": sig.get("ts", 0), "project": sig.get("project", "")}
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -164,8 +171,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(load_json(fpath(pid, "outline.json"), {}) if pid else {}, ensure_ascii=False))
         elif path == "/api/changes":
             self._send(200, json.dumps(load_json(fpath(pid, "changes.json"), []) if pid else [], ensure_ascii=False))
-        elif path == "/api/continue-signal/poll":
-            self._send(200, poll_continue_signal())
+        elif path == "/api/signal/continue/ack":
+            self._send(200, load_json(CONTINUE_ACK, {"ok": None}))
         else:
             self._send(404, {"error": "not found"})
 
@@ -233,11 +240,20 @@ class Handler(BaseHTTPRequestHandler):
                 return
             save_json(fpath(pid, "outline.json"), body.get("outline", {}))
             self._send(200, {"ok": True})
-        elif path == "/api/continue-signal":
+        elif path == "/api/signal/continue":
             # 网页「保存并继续」→ 写一条续写信号，供 continue_watcher.py 消费注入 Hermes
             sig = {"text": str(body.get("text", "")), "round": body.get("round", 0),
-                   "t": time.strftime("%H:%M:%S")}
+                   "t": time.strftime("%H:%M:%S"), "ts": time.time(), "project": pid or ""}
             save_json(CONTINUE_SIGNAL, sig)
+            self._send(200, {"ok": True})
+        elif path == "/api/signal/continue/take":
+            # watcher 消费（POST：有副作用，读后即删，不用 GET）
+            self._send(200, take_continue_signal())
+        elif path == "/api/signal/continue/ack":
+            # watcher 注入完成后回写 {ok, pane, err, ts}，前端轮询显示真实注入状态
+            ack = {"ok": bool(body.get("ok")), "pane": body.get("pane", ""),
+                   "err": body.get("err", ""), "ts": time.time()}
+            save_json(CONTINUE_ACK, ack)
             self._send(200, {"ok": True})
         elif path == "/api/changes":
             if not pid:

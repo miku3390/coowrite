@@ -912,25 +912,40 @@ async function saveAll() {
   // 当前编辑内容存回活动段，然后合并各段为全文保存
   if (activeTab < segs.length) segs[activeTab].content = $('#editor').value;
   const text = segs.map(s => s.content).join('');
-  await api('/api/save', 'POST', { draft: text, round: state.round || 0 });
-  // 续写信号：写给 continue_watcher.py（tmux 注入 Hermes）；纯浏览器+watcher 场景用。
-  // Electron 桥存在时两条路都走也不冲突——桌面端有自己的注入逻辑，watcher 不在 tmux 里就不生效。
-  const contText = `继续协同写作：第 ${state.round || 0} 回合「${state.scene || '（未命名）'}」。请读取最新稿子（draft.md）续写下一段，写回后告诉我。`;
-  api('/api/continue-signal', 'POST', { text: contText, round: state.round || 0 }).catch(() => {});
-  markSaved();
-  $('#statusText').textContent = '已保存，续写信号已发出';
+  const res = await api('/api/save', 'POST', { draft: text, round: state.round || 0 });
+  if (!res || !res.ok) { markUnsaved(); $('#statusText').textContent = '保存失败'; return; }
   draft = text;
   segs = mergeOldest(parseSegments(draft));
   if (activeTab >= segs.length) activeTab = segs.length - 1;
   renderTabs();
   $('#editor').value = segs.length ? segs[activeTab].content : '';
-  // 桌面端桥存在时，把「继续」信号发给主窗口，让扇（主对话）续写。
-  // 纯浏览器（无桥）时静默跳过——此时仅保存，不触发续写。
+  markSaved();
+  const contText = `继续协同写作：第 ${state.round || 0} 回合「${state.scene || '（未命名）'}」。请读取最新稿子（draft.md）续写下一段，写回后告诉我。`;
   if (window.workbenchBridge?.continue) {
-    const scene = state.scene || '（未命名）';
-    window.workbenchBridge.continue({
-      text: `继续协同写作：第 ${state.round || 0} 回合「${scene}」。请读取最新稿子（draft.md）续写下一段，写回后告诉我。`
-    });
+    // Electron 桌面端：走宿主桥（3939 信令）。此时不发 tmux 信号——双通道并存会让
+    // 桌面端会话和 tmux 会话同时续写同一篇稿，draft.md 互相覆盖。
+    window.workbenchBridge.continue({ text: contText });
+    $('#statusText').textContent = '已保存，已通知桌面端续写';
+  } else {
+    // 浏览器场景：发信号给 continue_watcher.py（tmux 注入 /queue [auto] 续写指令）
+    api('/api/signal/continue', 'POST', { text: contText, round: state.round || 0 }).catch(() => {});
+    $('#statusText').textContent = '已保存，续写信号已发出（等待注入）';
+    pollContinueAck(Date.now());
+  }
+}
+async function pollContinueAck(startMs) {
+  // watcher 注入完成后回写 ack；轮询几秒把真实注入状态显示到状态栏
+  for (let i = 0; i < 8; i++) {
+    await new Promise(r => setTimeout(r, 1200));
+    try {
+      const ack = await api('/api/signal/continue/ack');
+      if (ack && ack.ts && ack.ts * 1000 >= startMs - 1000) {
+        $('#statusText').textContent = ack.ok
+          ? `已保存，已注入 ${ack.pane || 'tmux'}`
+          : `已保存，注入失败：${ack.err || '未知原因'}`;
+        return;
+      }
+    } catch (e) { /* 服务未起等，忽略继续轮询 */ }
   }
 }
 
