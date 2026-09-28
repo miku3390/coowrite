@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+协同写作服务 v0.1（回合制原型）
+- 静态页 + API：稿子读写、预算表、连接点图、diff 历史
+- 纯标准库，零依赖
+启动：python3 server.py [端口]  (默认 8338)
+"""
+import json, os, re, sys, time, difflib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, unquote
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+DATA = os.path.join(BASE, "data")
+os.makedirs(DATA, exist_ok=True)
+
+DRAFT = os.path.join(DATA, "draft.md")
+BACKUP = os.path.join(DATA, "draft_backup.md")
+DIFFS = os.path.join(DATA, "diffs.json")
+PLAN = os.path.join(DATA, "plan.json")
+LINKS = os.path.join(DATA, "links.json")
+STATE = os.path.join(DATA, "state.json")
+OUTLINE = os.path.join(DATA, "outline.json")
+CHANGES = os.path.join(DATA, "changes.json")
+
+def load_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+def save_json(path, obj):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=1)
+
+def read_draft():
+    try:
+        with open(DRAFT, encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+def write_draft(text):
+    # 备份上一版
+    if os.path.exists(DRAFT):
+        import shutil
+        shutil.copy(DRAFT, BACKUP)
+    with open(DRAFT, "w", encoding="utf-8") as f:
+        f.write(text)
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+        if isinstance(body, (dict, list)):
+            body = json.dumps(body, ensure_ascii=False)
+        data = body.encode("utf-8") if isinstance(body, str) else body
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _read_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8")
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
+
+    def do_GET(self):
+        path = unquote(urlparse(self.path).path)
+        if path == "/" or path == "/index.html":
+            html = os.path.join(BASE, "index.html")
+            with open(html, encoding="utf-8") as f:
+                self._send(200, f.read(), "text/html; charset=utf-8")
+        elif path == "/api/draft":
+            self._send(200, json.dumps({"draft": read_draft()}, ensure_ascii=False))
+        elif path == "/api/plan":
+            self._send(200, json.dumps(load_json(PLAN, {}), ensure_ascii=False))
+        elif path == "/api/links":
+            self._send(200, json.dumps(load_json(LINKS, {"anchors": []}), ensure_ascii=False))
+        elif path == "/api/state":
+            self._send(200, json.dumps(load_json(STATE, {"round": 0, "scene": ""}), ensure_ascii=False))
+        elif path == "/api/diffs":
+            self._send(200, json.dumps(load_json(DIFFS, []), ensure_ascii=False))
+        elif path == "/api/leaves":
+            leaves = load_json(os.path.join(BASE, "leaves.json"), {})
+            self._send(200, json.dumps(leaves, ensure_ascii=False))
+        elif path == "/api/outline":
+            self._send(200, json.dumps(load_json(OUTLINE, {}), ensure_ascii=False))
+        elif path == "/api/changes":
+            self._send(200, json.dumps(load_json(CHANGES, []), ensure_ascii=False))
+        else:
+            self._send(404, {"error": "not found"})
+
+    def do_POST(self):
+        path = unquote(urlparse(self.path).path)
+        body = self._read_body()
+        if path == "/api/save":
+            text = body.get("draft", "")
+            prev = read_draft()
+            write_draft(text)
+            # diff 记录（统一 diff，用于展示改动）
+            sm = difflib.SequenceMatcher(None, prev.splitlines(), text.splitlines())
+            ops = [{"tag": op, "a": prev.splitlines()[i1:i2], "b": text.splitlines()[j1:j2]}
+                   for op, i1, i2, j1, j2 in sm.get_opcodes() if op != "equal"]
+            diffs = load_json(DIFFS, [])
+            diffs.append({"t": time.strftime("%H:%M:%S"), "round": body.get("round", 0),
+                          "ops": ops[:20]})
+            save_json(DIFFS, diffs)
+            self._send(200, {"ok": True, "diff_count": len(ops)})
+        elif path == "/api/plan":
+            save_json(PLAN, body.get("plan", {}))
+            self._send(200, {"ok": True})
+        elif path == "/api/links":
+            save_json(LINKS, body.get("links", {"anchors": []}))
+            self._send(200, {"ok": True})
+        elif path == "/api/state":
+            save_json(STATE, body.get("state", {}))
+            self._send(200, {"ok": True})
+        elif path == "/api/outline":
+            save_json(OUTLINE, body.get("outline", {}))
+            self._send(200, {"ok": True})
+        elif path == "/api/changes":
+            # 语义变化记录：AI 读 diff 后写入"什么故事事实变了"
+            changes = load_json(CHANGES, [])
+            changes.append(body.get("change", {}))
+            save_json(CHANGES, changes)
+            self._send(200, {"ok": True})
+        else:
+            self._send(404, {"error": "not found"})
+
+if __name__ == "__main__":
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8338
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    print(f"协同写作服务: http://127.0.0.1:{port}")
+    print(f"数据目录: {DATA}")
+    srv.serve_forever()

@@ -1,0 +1,16 @@
+# 文章数据：草稿正文、项目状态、diff／语义变化记录——属于私人创作内容，不入库
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 临时备份
+*.bak-*
+*.orig

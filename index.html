@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>协同写作工作台</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --panel: rgba(255,255,255,.82);
+    --panel-solid: #ffffff;
+    --ink: #1d1d1f;
+    --sub: #86868b;
+    --line: rgba(0,0,0,.08);
+    --accent: #c83250;
+    --accent-soft: #fdeef1;
+    --ok: #34c759;
+    --warn: #ff9500;
+    --conc: #c83250;
+    --qual: #2a6f97;
+    --radius: 16px;
+    --shadow: 0 2px 14px rgba(0,0,0,.06), 0 0 1px rgba(0,0,0,.04);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    height: 100vh;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .view { display: none; height: 100vh; }
+  .view.active { display: flex; flex-direction: column; }
+
+  /* ---------- 顶部栏（毛玻璃） ---------- */
+  .topbar {
+    height: 52px;
+    background: rgba(255,255,255,.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid rgba(0,0,0,.06);
+    display: flex; align-items: center;
+    padding: 0 20px; gap: 12px;
+    position: relative; z-index: 10;
+  }
+  .topbar h1 { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .topbar .crumb { font-size: 12px; color: var(--sub); }
+  .topbar .spacer { flex: 1; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
+  .step-tags { display: flex; gap: 4px; }
+  .step-tags .st {
+    font-size: 11px; padding: 3px 12px; border-radius: 980px;
+    background: rgba(0,0,0,.05); color: var(--sub); font-weight: 500;
+  }
+  .step-tags .st.on { background: var(--accent); color: #fff; }
+
+  /* ---------- 主页 ---------- */
+  #view-home .home-body {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 32px;
+  }
+  #view-home .home-title { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; }
+  #view-home .home-sub { font-size: 14px; color: var(--sub); }
+  .cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+  .card-entry {
+    width: 180px; height: 140px;
+    background: var(--panel-solid); border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; cursor: pointer;
+    transition: transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s;
+  }
+  .card-entry:hover:not(.off) { transform: translateY(-3px); box-shadow: 0 8px 28px rgba(0,0,0,.1); }
+  .card-entry .ico { font-size: 32px; }
+  .card-entry .name { font-size: 15px; font-weight: 600; }
+  .card-entry.off { opacity: .35; cursor: not-allowed; }
+  .card-entry.off .tag { font-size: 11px; color: var(--sub); }
+
+  /* ---------- 表单页 ---------- */
+  .form-body { flex: 1; overflow-y: auto; display: flex; justify-content: center; padding: 28px 16px; }
+  .form-card {
+    width: 640px; max-width: 100%;
+    background: var(--panel-solid); border-radius: 20px;
+    box-shadow: var(--shadow); padding: 28px 32px; margin-bottom: 32px;
+  }
+  .form-card h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .form-card .desc { font-size: 12.5px; color: var(--sub); margin-bottom: 20px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .field label small { color: var(--sub); font-weight: 400; }
+  .field textarea {
+    width: 100%; min-height: 52px; max-height: 280px;
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; font-size: 14px; line-height: 1.7;
+    font-family: inherit; resize: vertical; outline: none;
+    background: #fff; transition: border-color .15s, box-shadow .15s;
+  }
+  .field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .len-row { display: flex; gap: 10px; align-items: center; }
+  .len-row select, .len-row input {
+    border: 1px solid var(--line); border-radius: 8px;
+    font-size: 13px; padding: 7px 12px; background: #fff; font-family: inherit; outline: none;
+  }
+  .len-row select:focus, .len-row input:focus { border-color: var(--accent); }
+  .form-actions { display: flex; gap: 10px; margin-top: 22px; }
+
+  .btn {
+    padding: 10px 24px; border: none; border-radius: 980px;
+    background: var(--accent); color: #fff;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: filter .15s, transform .1s;
+    font-family: inherit;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn:active { transform: scale(.97); }
+  .btn.ghost { background: rgba(0,0,0,.05); color: var(--ink); font-weight: 500; }
+  .btn.ghost:hover { background: rgba(0,0,0,.09); filter: none; }
+  .btn:disabled { background: rgba(0,0,0,.12); cursor: not-allowed; }
+  .btn.small { padding: 6px 16px; font-size: 12.5px; }
+
+  /* ---------- 项目切换 ---------- */
+  .proj-picker { display: flex; align-items: center; gap: 8px; }
+  .proj-picker select {
+    border: 1px solid var(--line); border-radius: 8px;
+    font-size: 12.5px; padding: 5px 10px; background: #fff;
+    color: var(--ink); font-family: inherit; outline: none;
+    max-width: 190px; cursor: pointer;
+  }
+  .proj-picker select:focus { border-color: var(--accent); }
+
+  /* ---------- 叶子选型页 ---------- */
+  .leaves-body { flex: 1; overflow-y: auto; padding: 24px 16px; }
+  .leaves-wrap { width: 620px; max-width: 100%; margin: 0 auto; }
+  .leaves-wrap h2 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .leaves-wrap .desc { font-size: 12.5px; color: var(--sub); margin: 4px 0 16px; }
+
+  /* ---------- 预制方案 ---------- */
+  .preset-box {
+    background: var(--panel-solid); border-radius: 16px;
+    box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 14px;
+  }
+  .preset-box h4 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .preset-list { display: flex; flex-wrap: wrap; gap: 10px; }
+  .preset {
+    padding: 8px 14px; border-radius: 12px;
+    background: rgba(0,0,0,.04); border: 1px solid var(--line);
+    cursor: pointer; transition: all .15s;
+    min-width: 110px;
+  }
+  .preset:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .preset .p-name { font-size: 12.5px; font-weight: 600; }
+  .preset .p-desc { font-size: 10.5px; color: var(--sub); margin-top: 2px; }
+
+  /* ---------- tag 选择（B站式） ---------- */
+  .tag-box {
+    background: var(--panel-solid); border-radius: 16px;
+    box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 14px;
+  }
+  .tag-box h4 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tag {
+    padding: 5px 14px; border-radius: 980px;
+    background: rgba(0,0,0,.05); color: var(--ink);
+    font-size: 12.5px; font-weight: 500; cursor: pointer;
+    border: 1px solid transparent;
+    transition: all .15s; user-select: none;
+  }
+  .tag:hover { background: rgba(0,0,0,.09); }
+  .tag.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .tag-add-row { display: flex; gap: 8px; margin-top: 10px; }
+  .tag-add-row input {
+    flex: 1; border: 1px solid var(--line); border-radius: 980px;
+    padding: 6px 14px; font-size: 12.5px; outline: none; font-family: inherit;
+  }
+  .tag-add-row input:focus { border-color: var(--accent); }
+
+  .axis-block {
+    background: var(--panel-solid); border-radius: 16px;
+    box-shadow: var(--shadow); padding: 18px 22px; margin-bottom: 16px;
+  }
+  .axis-block h3 { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
+  .axis-block .axis-desc { font-size: 11.5px; color: var(--sub); margin-bottom: 6px; }
+  .conflict-banner {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: rgba(253,243,224,.88);
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    border-bottom: 1px solid rgba(255,149,0,.3);
+    color: #c26e00;
+    font-size: 12px;
+    padding: 10px 18px;
+    line-height: 1.7;
+    margin: 0 0 14px;
+    box-shadow: 0 4px 16px rgba(255,149,0,.12);
+  }
+  .conflict-banner:empty { display: none; }
+  .modal .conflict-banner {
+    position: sticky; top: 0; z-index: 40;
+    margin: 0 -20px 6px; padding: 10px 20px;
+    border-radius: 0;
+  }
+  .leaves-actions { display: flex; gap: 10px; margin-top: 4px; }
+
+  /* ---------- 滑块（纵向叶子） ---------- */
+  .leaf-item { padding: 9px 2px; }
+  .leaf-item .leaf-head { display: flex; align-items: baseline; gap: 8px; }
+  .leaf-item .leaf-name { font-size: 13px; font-weight: 600; }
+  .leaf-item .leaf-desc { font-size: 11px; color: var(--sub); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .leaf-item .leaf-w { font-size: 10.5px; color: var(--sub); }
+  .leaf-item .slider-row { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+  .leaf-item .slider-row .ticks { font-size: 10px; color: var(--sub); width: 16px; }
+  .leaf-item input[type=range] {
+    flex: 1; appearance: none; -webkit-appearance: none;
+    height: 4px; border-radius: 2px; background: rgba(0,0,0,.1); outline: none;
+    transition: opacity .2s;
+  }
+  .leaf-item input[type=range]::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: #fff; cursor: pointer;
+    border: 1px solid rgba(0,0,0,.1);
+    box-shadow: 0 1px 4px rgba(0,0,0,.25);
+    transition: transform .1s;
+  }
+  .leaf-item input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.1); }
+  .leaf-item input[type=range]::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; cursor: pointer; border: 1px solid rgba(0,0,0,.1);
+    box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  }
+  .leaf-item .leaf-val {
+    width: 34px; text-align: center; font-size: 13px; font-weight: 700;
+    color: var(--conc);
+  }
+  .leaf-item[data-axis="qual"] .leaf-val { color: var(--qual); }
+  .leaf-item .leaf-conflict-flag { font-size: 10.5px; color: var(--warn); margin-left: 4px; }
+  .leaf-item.locked { opacity: .35; }
+  .leaf-item.locked input[type=range] { pointer-events: none; }
+  .leaf-item.conflict {
+    background: rgba(255,149,0,.06);
+    border: 1px solid rgba(255,149,0,.35);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 2px -10px;
+  }
+  .leaf-item.conflict .leaf-name { color: var(--warn); }
+
+  /* ---------- 编辑页 ---------- */
+  .main { display: flex; height: calc(100vh - 52px); }
+  .editor-wrap { flex: 1; display: flex; flex-direction: column; padding: 18px; min-width: 0; }
+  .editor-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .editor-head .scene-tag {
+    background: var(--accent-soft); color: var(--accent);
+    font-size: 12px; padding: 4px 14px; border-radius: 980px; font-weight: 600;
+  }
+  .editor-head .hint { font-size: 12px; color: var(--sub); }
+
+  /* ---------- 浏览器式标签页 ---------- */
+  .tabs-bar {
+    display: flex; align-items: flex-end; gap: 2px;
+    background: rgba(0,0,0,.04);
+    border-radius: 10px 10px 0 0;
+    padding: 6px 8px 0;
+    overflow-x: auto; overflow-y: hidden;
+    min-height: 36px;
+    scrollbar-width: thin;
+  }
+  .tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px;
+    font-size: 12px; font-weight: 500;
+    color: var(--sub);
+    background: rgba(0,0,0,.05);
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    border: 1px solid transparent;
+    border-bottom: none;
+    transition: background .12s, color .12s;
+  }
+  .tab:hover { background: rgba(0,0,0,.09); color: var(--ink); }
+  .tab.active {
+    background: var(--panel-solid);
+    color: var(--ink);
+    font-weight: 600;
+    border-color: var(--line);
+    box-shadow: 0 -1px 4px rgba(0,0,0,.04);
+  }
+  .tab .tab-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); opacity: 0;
+  }
+  .tab.new .tab-dot { opacity: 1; }
+  .tab .tab-x {
+    font-size: 12px; color: var(--sub); opacity: 0;
+    padding: 0 2px; border-radius: 4px;
+  }
+  .tab:hover .tab-x { opacity: 1; }
+  .tab .tab-x:hover { background: rgba(0,0,0,.1); color: var(--ink); }
+  textarea#editor {
+    flex: 1; width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 0 0 14px 14px;
+    background: var(--panel-solid); padding: 20px 24px;
+    font-size: 15px; line-height: 1.95; color: var(--ink);
+    resize: none; outline: none; font-family: inherit;
+    box-shadow: var(--shadow);
+  }
+  textarea#editor:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .side {
+    width: 320px; min-width: 320px;
+    background: rgba(255,255,255,.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-left: 1px solid rgba(0,0,0,.06);
+    overflow-y: auto; padding: 16px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .card {
+    background: var(--panel-solid); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 14px;
+  }
+  .card h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .advice { font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; max-height: 280px; overflow-y: auto; color: var(--ink); }
+  .links { font-size: 12px; }
+  .links .item {
+    border-left: 3px solid var(--qual); padding: 5px 9px; margin: 5px 0;
+    font-size: 11.5px; background: rgba(42,111,151,.06); border-radius: 0 6px 6px 0;
+  }
+  .links .item b { color: var(--qual); }
+  .budget-mini { font-size: 11.5px; }
+  .budget-mini .bar { height: 5px; border-radius: 3px; background: rgba(0,0,0,.08); margin: 4px 0 8px; overflow: hidden; }
+  .budget-mini .bar i { display: block; height: 100%; background: var(--conc); border-radius: 3px; transition: width .3s; }
+
+  /* ---------- 悬浮操作卡片 ---------- */
+  .float-card {
+    position: fixed;
+    right: 344px;
+    bottom: 22px;
+    z-index: 50;
+    background: rgba(255,255,255,.75);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid rgba(255,255,255,.5);
+    border-radius: 18px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.04);
+    padding: 10px 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .float-card .fc-btn {
+    border: none; border-radius: 980px;
+    padding: 8px 16px; font-size: 12.5px; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+    background: rgba(0,0,0,.06); color: var(--ink);
+    transition: all .15s;
+  }
+  .float-card .fc-btn:hover { background: rgba(0,0,0,.1); }
+  .float-card .fc-btn.primary { background: var(--accent); color: #fff; }
+  .float-card .fc-btn.primary:hover { filter: brightness(1.08); }
+  .float-card .fc-btn:active { transform: scale(.96); }
+
+  /* ---------- 弹窗 ---------- */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.4);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    width: 560px; max-width: 94vw; max-height: 86vh;
+    background: rgba(255,255,255,.92);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border-radius: 20px;
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,.3);
+  }
+  .modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--line);
+  }
+  .modal-head h3 { font-size: 16px; font-weight: 700; }
+  .modal-head .x { border: none; background: rgba(0,0,0,.05); width: 28px; height: 28px; border-radius: 50%; font-size: 15px; cursor: pointer; color: var(--ink); }
+  .modal-body { flex: 1; overflow-y: auto; padding: 12px 20px; }
+  .modal-foot {
+    display: flex; justify-content: flex-end; gap: 10px;
+    padding: 14px 20px; border-top: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ 视图 1：主页 ============ -->
+<div class="view active" id="view-home">
+  <div class="topbar">
+    <h1>协同写作工作台</h1>
+    <span class="crumb">选择工作类型</span>
+    <div class="spacer"></div>
+  </div>
+  <div class="home-body">
+    <div>
+      <div class="home-title">想做什么？</div>
+      <div class="home-sub" style="text-align:center">回合制协同 · 你改一段，我写一段</div>
+    </div>
+    <div class="cards">
+      <div class="card-entry" onclick="gotoView('outline')">
+        <div class="ico">✍️</div>
+        <div class="name">写文章</div>
+      </div>
+      <div class="card-entry off"><div class="ico">💻</div><div class="name">写代码</div><div class="tag">开发中</div></div>
+      <div class="card-entry off"><div class="ico">📊</div><div class="name">写表格</div><div class="tag">开发中</div></div>
+      <div class="card-entry off"><div class="ico">🧮</div><div class="name">其他</div><div class="tag">开发中</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 视图 2：文章规划 ============ -->
+<div class="view" id="view-outline">
+  <div class="topbar">
+    <h1>协同写作工作台</h1>
+    <div class="step-tags"><span class="st on">① 规划</span><span class="st">② 叶子选型</span><span class="st">③ 协同写作</span></div>
+    <div class="spacer"></div>
+  </div>
+  <div class="form-body">
+    <div class="form-card">
+      <h2>文章规划</h2>
+      <div class="desc">像填空一样描述这篇文章。AI 会依据这份规划生成预算表与连接点图。</div>
+      <div class="field"><label>主要人物 <small>角色名、身份、关系基调</small></label>
+        <textarea id="f-main" placeholder="例：羽川翼（调教者，温婉腹黑）、黑仪（被调教者，毒舌但依恋）"></textarea></div>
+      <div class="field"><label>次要人物 <small>可留空</small></label>
+        <textarea id="f-side" placeholder="例：游戏厅里的男人们（群体，无个体）"></textarea></div>
+      <div class="field"><label>文章背景 <small>时间、地点、世界观</small></label>
+        <textarea id="f-bg" placeholder="例：文化祭第三天的图书室，昭和怀旧企划"></textarea></div>
+      <div class="field"><label>文章主要情节 <small>从哪开始，到哪结束</small></label>
+        <textarea id="f-plot" placeholder="例：借书任务→闭架书库→放置爬楼→独占宣言"></textarea></div>
+      <div class="field"><label>文笔参照 <small>可直接粘贴别人的段落或自己写的情节作为风格参照</small></label>
+        <textarea id="f-style" style="min-height:120px" placeholder="粘贴参照文本，或描述风格，如：西尾维新风，长短句落差，少修辞直给"></textarea></div>
+      <div class="field"><label>想要出现的情节 <small>必写的 play / 场景</small></label>
+        <textarea id="f-wants" placeholder="例：远程跳蛋、公共场合维持体面、记录拍照"></textarea></div>
+      <div class="field"><label>其他建议 <small>红线、节奏、结尾等</small></label>
+        <textarea id="f-extra" placeholder="例：结尾留白不点题"></textarea></div>
+      <div class="field">
+        <label>目标字数 <small>成稿长度</small></label>
+        <div class="len-row">
+          <select id="f-len" onchange="lenToggle()">
+            <option value="1000">约 1000 字</option>
+            <option value="3000">约 3000 字</option>
+            <option value="5000" selected>约 5000 字</option>
+            <option value="8000">约 8000 字</option>
+            <option value="12000">约 12000 字</option>
+            <option value="20000">约 20000 字</option>
+            <option value="custom">自定义</option>
+          </select>
+          <input id="f-len-custom" placeholder="输入字数" style="display:none">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn ghost" onclick="gotoView('home')">返回</button>
+        <button class="btn" onclick="saveOutline()">下一步：叶子选型</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 视图 3：叶子选型 ============ -->
+<div class="view" id="view-leaves">
+  <div class="topbar">
+    <h1>协同写作工作台</h1>
+    <div class="step-tags"><span class="st">① 规划</span><span class="st on">② 叶子选型</span><span class="st">③ 协同写作</span></div>
+    <div class="spacer"></div>
+  </div>
+  <div class="leaves-body">
+    <div class="conflict-banner" id="conflictBanner"></div>
+    <div class="leaves-wrap">
+      <h2>叶子预算表</h2>
+      <div class="desc">拖动滑块设定目标档位——这是这篇文章的施工图。互斥时后选的一方自动锁定。</div>
+
+      <div class="preset-box">
+        <h4>预制方案 <small style="color:var(--sub);font-weight:400">（点击应用，可再微调）</small></h4>
+        <div class="preset-list" id="presetList"></div>
+      </div>
+
+      <div class="tag-box">
+        <h4>标签 <small style="color:var(--sub);font-weight:400">（决定称号匹配与类别约束，可多选）</small></h4>
+        <div class="tag-list" id="tagList"></div>
+        <div class="tag-add-row">
+          <input id="tagInput" placeholder="自定义标签，回车添加" onkeydown="if(event.key==='Enter')addTag()">
+          <button class="btn small ghost" onclick="addTag()">添加</button>
+        </div>
+      </div>
+
+      <div id="leavesBody">加载中……</div>
+      <div class="leaves-actions">
+        <button class="btn ghost" onclick="gotoView('outline')">上一步：规划</button>
+        <button class="btn ghost" onclick="resetLeaves()">重置</button>
+        <button class="btn" onclick="savePlan()">下一步：进入协同写作</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 视图 4：协同编辑 ============ -->
+<div class="view" id="view-editor">
+  <div class="topbar">
+    <h1>协同写作工作台</h1>
+    <div class="step-tags"><span class="st">① 规划</span><span class="st">② 叶子选型</span><span class="st on">③ 协同写作</span></div>
+    <div class="spacer"></div>
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText" style="font-size:12px;color:var(--sub)">草稿未保存</span>
+    <button class="btn" id="saveBtn2" onclick="saveAll()">保存修改并继续</button>
+    <button class="btn ghost" onclick="openLeafModal()">调整叶子档位</button>
+    <button class="btn ghost" onclick="gotoView('leaves')">← 回叶子选型</button>
+  </div>
+  <div class="main">
+    <div class="editor-wrap">
+      <div class="editor-head">
+        <span class="scene-tag" id="sceneTag">未开始</span>
+        <span class="hint" id="sceneName">（等待第一段）</span>
+      </div>
+      <div class="tabs-bar" id="tabsBar"></div>
+      <textarea id="editor" placeholder="（等待 AI 写入第一段……）"></textarea>
+    </div>
+    </div>
+</div>
+
+<!-- ============ 叶子调整弹窗 ============ -->
+<div class="modal-overlay" id="leafModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>叶子调整</h3>
+      <button class="x" onclick="closeLeafModal()">✕</button>
+    </div>
+    <div class="modal-body" id="leafModalBody"></div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeLeafModal()">取消</button>
+      <button class="btn" onclick="saveLeafModal()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 新建文章弹窗 ============ -->
+<div class="modal-overlay" id="projModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>新建文章</h3>
+      <button class="x" onclick="closeProjModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>文章标题</label>
+        <input id="projName" placeholder="给这篇文章起个名字"
+          style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:14px;font-family:inherit;outline:none"
+          onkeydown="if(event.key==='Enter')confirmNewProject()">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeProjModal()">取消</button>
+      <button class="btn" onclick="confirmNewProject()">创建</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let leaves = null, state = {};
+let planSel = {};
+let tags = [];
+
+const PRESET_TAGS = ['伪娘','放尿','调教','NTR','露出','群交','纯爱','网调','失禁','寸止','强制高潮','束缚','野外','药物','初夜','仙侠','古风','逆后宫','拘束','口交','肛交','羞耻','记录','远程','主从','堕落','虐恋','和风','花街','暗黑','灵异','校园'];
+
+async function api(path, method='GET', body=null) {
+  const opt = { method, headers: {} };
+  if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  return r.json();
+}
+
+// ---------- 视图切换 ----------
+const VIEWS = ['home', 'outline', 'leaves', 'editor'];
+function gotoView(name) {
+  VIEWS.forEach(v => document.getElementById('view-' + v).classList.toggle('active', v === name));
+  if (name === 'outline') loadOutline();
+  if (name === 'leaves') loadLeavesView();
+  if (name === 'editor') initEditor();
+}
+
+// ---------- 项目切换 / 新建 ----------
+function injectProjectPicker() {
+  document.querySelectorAll('.topbar').forEach(tb => {
+    if (tb.querySelector('.proj-picker')) return;
+    const spacer = tb.querySelector('.spacer');
+    if (!spacer) return;
+    const picker = document.createElement('div');
+    picker.className = 'proj-picker';
+    picker.innerHTML = '<select class="proj-sel" onchange="switchProject(this.value)"></select><button class="btn small ghost" onclick="openProjModal()">＋新建</button>';
+    tb.insertBefore(picker, spacer);
+  });
+}
+
+async function loadProjects() {
+  const p = await api('/api/projects');
+  document.querySelectorAll('.proj-sel').forEach(s => {
+    s.innerHTML = p.items.map(it =>
+      `<option value="${it.id}" ${it.id === p.active ? 'selected' : ''}>${it.name}</option>`
+    ).join('') || '<option value="">（无项目）</option>';
+  });
+  return p;
+}
+
+async function switchProject(id) {
+  if (!id) return;
+  await api('/api/project/switch', 'POST', { id });
+  await loadProjects();
+  // 切项目后重置编辑态，回主页（避免旧项目数据残留显示）
+  state = {}; draft = ''; planSel = {}; tags = [];
+  gotoView('home');
+}
+
+function openProjModal() { $('#projName').value = ''; $('#projModal').classList.add('show'); setTimeout(() => $('#projName').focus(), 0); }
+function closeProjModal() { $('#projModal').classList.remove('show'); }
+async function confirmNewProject() {
+  const name = $('#projName').value.trim();
+  if (!name) { $('#projName').focus(); return; }
+  await api('/api/projects', 'POST', { name });
+  await loadProjects();
+  closeProjModal();
+  // 新建后清空编辑态，从主页开始新文章的规划
+  state = {}; draft = ''; planSel = {}; tags = [];
+  gotoView('home');
+}
+
+// ---------- 规划 ----------
+function lenToggle() { $('#f-len-custom').style.display = $('#f-len').value === 'custom' ? '' : 'none'; }
+async function saveOutline() {
+  let len = $('#f-len').value;
+  if (len === 'custom') len = $('#f-len-custom').value.trim() || '';
+  const outline = {
+    main: $('#f-main').value.trim(), side: $('#f-side').value.trim(),
+    bg: $('#f-bg').value.trim(), plot: $('#f-plot').value.trim(),
+    style: $('#f-style').value.trim(), wants: $('#f-wants').value.trim(),
+    extra: $('#f-extra').value.trim(), len: len,
+  };
+  await api('/api/outline', 'POST', { outline });
+  gotoView('leaves');
+}
+async function loadOutline() {
+  const o = (await api('/api/outline')) || {};
+  // 无条件赋值：空项目（无 outline）时也要清空表单，别残留上一篇文章的内容
+  $('#f-main').value = o.main || '';
+  $('#f-side').value = o.side || '';
+  $('#f-bg').value = o.bg || '';
+  $('#f-plot').value = o.plot || '';
+  $('#f-style').value = o.style || '';
+  $('#f-wants').value = o.wants || '';
+  $('#f-extra').value = o.extra || '';
+  if (o.len && ['1000','3000','5000','8000','12000','20000'].includes(String(o.len))) {
+    $('#f-len').value = String(o.len);
+    lenToggle();
+  } else if (o.len) {
+    $('#f-len').value = 'custom'; $('#f-len-custom').value = o.len; lenToggle();
+  } else {
+    $('#f-len').value = '5000'; $('#f-len-custom').value = ''; lenToggle();
+  }
+}
+
+// ---------- 标签 ----------
+function renderTags() {
+  const list = PRESET_TAGS.map(t =>
+    `<span class="tag ${tags.includes(t)?'on':''}" onclick="toggleTag('${t}')">${t}</span>`
+  ).join('');
+  $('#tagList').innerHTML = list;
+}
+function toggleTag(t) {
+  const i = tags.indexOf(t);
+  if (i >= 0) tags.splice(i, 1); else tags.push(t);
+  renderTags(); checkConflicts();
+}
+function addTag() {
+  const v = $('#tagInput').value.trim();
+  if (!v) return;
+  if (!PRESET_TAGS.includes(v) && !tags.includes(v)) tags.push(v);
+  $('#tagInput').value = '';
+  renderTags(); checkConflicts();
+}
+
+// ---------- 叶子（滑块渲染） ----------
+function leafSliderHtml(lf, value) {
+  const cur = value ?? 0;
+  const color = lf.axis === 'conc' ? 'var(--conc)' : 'var(--qual)';
+  return `<div class="leaf-item" data-leaf="${lf.id}" data-axis="${lf.axis}">
+    <div class="leaf-head">
+      <span class="leaf-name">${lf.id}</span>
+      <span class="leaf-desc">${lf.desc}</span>
+      <span class="leaf-w">w${lf.w}</span>
+    </div>
+    <div class="slider-row">
+      <span class="ticks">0</span>
+      <input type="range" min="0" max="${lf.max}" step="1" value="${cur}"
+        oninput="onLeafSlide('${lf.id}', this.value, this)">
+      <span class="ticks">${lf.max}</span>
+      <span class="leaf-val" id="val-${lf.id}" style="color:${color}">${cur||'—'}</span>
+      <span class="leaf-conflict-flag" id="flag-${lf.id}"></span>
+    </div>
+  </div>`;
+}
+function renderLeafList(container) {
+  const ax = leaves.axis;
+  // 保留容器内已有的横幅（弹窗的 modalConflict）
+  const keep = $(container).querySelector('.conflict-banner');
+  let html = '';
+  for (const key of ['conc', 'qual']) {
+    const g = ax[key];
+    const color = key === 'conc' ? 'var(--conc)' : 'var(--qual)';
+    html += `<div class="axis-block">
+      <h3 style="color:${color}">${g.name} <small style="color:var(--sub);font-size:11px">${g.desc}</small></h3>
+      ${g.leaves.map(lf => leafSliderHtml({...lf, axis:key}, planSel[lf.id])).join('')}
+    </div>`;
+  }
+  $(container).innerHTML = html;
+  if (keep) $(container).insertBefore(keep, $(container).firstChild);
+  updateLocked();
+}
+function findLeaf(id) {
+  for (const key of ['conc','qual'])
+    for (const lf of leaves.axis[key].leaves)
+      if (lf.id === id) return { ...lf, axis: key };
+  return null;
+}
+function onLeafSlide(id, val, el) {
+  const v = parseInt(val) || 0;
+  planSel[id] = v;
+  const vEl = document.getElementById('val-' + id);
+  if (vEl) {
+    vEl.textContent = planSel[id] || '—';
+    const lf = findLeaf(id);
+    if (lf) vEl.style.color = lf.axis === 'conc' ? 'var(--conc)' : 'var(--qual)';
+  }
+  updateLocked();
+  checkConflicts();
+}
+function updateLocked() {
+  // 软约束：互斥对不再硬锁，改为冲突态（橙框提示，仍可调）
+  for (const [a, b] of (leaves.rules.exclusive || [])) {
+    conflictFlag(b, (planSel[a] || 0) >= 4);
+    conflictFlag(a, (planSel[b] || 0) >= 4);
+  }
+}
+function conflictFlag(id, conflict) {
+  const item = document.querySelector(`[data-leaf="${id}"]`);
+  if (!item) return;
+  item.classList.toggle('conflict', conflict);
+  const flag = document.getElementById('flag-' + id);
+  if (flag) {
+    if (conflict) {
+      const peer = exclusivePeer(id);
+      flag.textContent = peer ? `与${peer}互斥` : '互斥';
+    } else {
+      flag.textContent = '';
+    }
+  }
+}
+function exclusivePeer(id) {
+  for (const [a, b] of (leaves.rules.exclusive || [])) {
+    if (a === id) return b;
+    if (b === id) return a;
+  }
+  return null;
+}
+function checkConflicts() {
+  const banners = [];
+  // 互斥（软约束：提示冲突，不阻止）
+  for (const [a, b] of (leaves.rules.exclusive || [])) {
+    const va = planSel[a] || 0, vb = planSel[b] || 0;
+    if (va >= 4 && vb >= 4) banners.push(`互斥冲突：${a}(${va}) 与 ${b}(${vb}) 都高——蓄力与密度/挣扎与开发难以兼得，可自行权衡`);
+    else if (va >= 4) banners.push(`互斥提示：${b} 与 ${a}(${va}) 高档冲突——若坚持请留意篇幅分配`);
+    else if (vb >= 4) banners.push(`互斥提示：${a} 与 ${b}(${vb}) 高档冲突——若坚持请留意篇幅分配`);
+  }
+  // 协同
+  for (const [a, b] of (leaves.rules.synergy || [])) {
+    const va = planSel[a] || 0, vb = planSel[b] || 0;
+    if (va >= 4 && vb <= 2) banners.push(`协同：${a}(${va}) 高但 ${b}(${vb}) 低——建议同步拉高`);
+    if (vb >= 4 && va <= 2) banners.push(`协同：${b}(${vb}) 高但 ${a}(${va}) 低——建议同步拉高`);
+  }
+  // 标签条件约束（tag 匹配类别名）
+  for (const c of (leaves.rules.conditions || [])) {
+    if (!tags.includes(c.category)) continue;
+    for (const r of c.rules) {
+      const v = planSel[r.leaf] || 0;
+      if (r.max !== undefined && v > r.max) banners.push(`标签约束：${c.category} 下 ${r.leaf} 应 ≤${r.max}（当前 ${v}）`);
+      if (r.min !== undefined && v > 0 && v < r.min) banners.push(`标签约束：${c.category} 下 ${r.leaf} 应 ≥${r.min}（当前 ${v}）`);
+    }
+  }
+  const bEl = $('#conflictBanner');
+  if (bEl) bEl.innerHTML = banners.join('<br>');
+  const mEl = $('#modalConflict');
+  if (mEl) mEl.innerHTML = banners.join('<br>');
+}
+
+// ---------- 预制方案 ----------
+function renderPresets() {
+  if (!leaves || !leaves.presets) { $('#presetList').innerHTML = ''; return; }
+  $('#presetList').innerHTML = leaves.presets.map(p =>
+    `<div class="preset" onclick="applyPreset('${p.name}')">
+       <div class="p-name">${p.name}</div>
+       <div class="p-desc">${p.desc}</div>
+     </div>`
+  ).join('');
+}
+function applyPreset(name) {
+  const p = leaves.presets.find(x => x.name === name);
+  if (!p) return;
+  planSel = Object.assign({}, p.leaves);
+  // 标签替换为 preset 推荐（不保留旧标签）
+  tags = (p.tags || []).slice();
+  renderTags();
+  renderLeafList('#leavesBody');
+  checkConflicts();
+}
+function resetLeaves() {
+  planSel = {};
+  tags = [];
+  renderTags();
+  renderLeafList('#leavesBody');
+  checkConflicts();
+}
+
+// ---------- 叶子选型页 ----------
+async function loadLeavesView() {
+  if (!leaves) leaves = await api('/api/leaves');
+  const saved = await api('/api/plan');
+  planSel = Object.assign({}, saved);
+  const st = await api('/api/state');
+  tags = (st.tags || []).slice();
+  renderPresets();
+  renderTags();
+  renderLeafList('#leavesBody');
+}
+async function savePlan() {
+  await api('/api/plan', 'POST', { plan: planSel });
+  const s = await api('/api/state');
+  s.tags = tags.slice();
+  await api('/api/state', 'POST', { state: s });
+  gotoView('editor');
+}
+
+// ---------- 编辑页 ----------
+let draft = '';
+let segs = [];       // 段落：[{start, end, from, to}]
+let activeTab = 0;   // 当前活动标签
+
+function parseSegments(text) {
+  const re = /<!--\s*\[SCENE:[^\]]+\]\s*-->/g;
+  const marks = [];
+  let m;
+  while ((m = re.exec(text))) marks.push(m.index);
+  if (!marks.length) return [{ start: 0, end: text.length, from: 1, to: 1, content: text }];
+  const segs = marks.map((s, i) => {
+    const end = i + 1 < marks.length ? marks[i + 1] : text.length;
+    return { start: s, end: end, from: i + 1, to: i + 1, content: text.slice(s, end) };
+  });
+  return segs;
+}
+function mergeOldest(segs) {
+  // 标签上限 9：超出把最开始两个合并，直到 ≤9
+  while (segs.length > 9) {
+    const a = segs[0], b = segs[1];
+    segs = [{ start: a.start, end: b.end, from: a.from, to: b.to, content: a.content + b.content }, ...segs.slice(2)];
+  }
+  return segs;
+}
+function segLabel(s) {
+  return s.from === s.to ? '第' + s.from + '段' : '第' + s.from + '-' + s.to + '段';
+}
+function renderTabs() {
+  const bar = $('#tabsBar');
+  if (!segs.length) { bar.innerHTML = ''; return; }
+  bar.innerHTML = segs.map((s, i) =>
+    `<div class="tab${i === activeTab ? ' active' : ''}" onclick="activateTab(${i})">${segLabel(s)}</div>`
+  ).join('');
+  const act = bar.querySelector('.tab.active');
+  if (act) act.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+function activateTab(i) {
+  // 先把当前编辑内容存回对应段，再切换到目标段
+  if (activeTab < segs.length) segs[activeTab].content = $('#editor').value;
+  activeTab = i;
+  renderTabs();
+  if (segs[i]) $('#editor').value = segs[i].content;
+}
+async function initEditor() {
+  state = await api('/api/state');
+  const d = await api('/api/draft');
+  draft = d.draft || '';
+  // 加载叶子预算（无条件赋值：空项目时也要清空 planSel，别残留上一篇文章的档位）
+  const saved = await api('/api/plan');
+  planSel = Object.assign({}, saved);
+  segs = mergeOldest(parseSegments(draft));
+  activeTab = segs.length ? segs.length - 1 : 0;  // 默认活动 = 最新一段
+  renderTabs();
+  $('#editor').value = segs.length ? segs[activeTab].content : '';
+  $('#sceneTag').textContent = state.scene || '未开始';
+  $('#sceneName').textContent = state.scene ? '' : '（等待第一段）';
+  markUnsaved();
+}
+function markUnsaved() { $('#statusText').textContent = '有未保存修改'; $('#statusDot').style.background = 'var(--warn)'; }
+function markSaved() { $('#statusText').textContent = '已保存'; $('#statusDot').style.background = 'var(--ok)'; }
+async function saveAll() {
+  // 当前编辑内容存回活动段，然后合并各段为全文保存
+  if (activeTab < segs.length) segs[activeTab].content = $('#editor').value;
+  const text = segs.map(s => s.content).join('');
+  await api('/api/save', 'POST', { draft: text, round: state.round || 0 });
+  markSaved();
+  draft = text;
+  segs = mergeOldest(parseSegments(draft));
+  if (activeTab >= segs.length) activeTab = segs.length - 1;
+  renderTabs();
+  $('#editor').value = segs.length ? segs[activeTab].content : '';
+  // 桌面端桥存在时，把「继续」信号发给主窗口，让扇（主对话）续写。
+  // 纯浏览器（无桥）时静默跳过——此时仅保存，不触发续写。
+  if (window.workbenchBridge?.continue) {
+    const scene = state.scene || '（未命名）';
+    window.workbenchBridge.continue({
+      text: `继续协同写作：第 ${state.round || 0} 回合「${scene}」。请读取最新稿子（draft.md）续写下一段，写回后告诉我。`
+    });
+  }
+}
+
+
+// ---------- 叶子调整弹窗 ----------
+function openLeafModal() {
+  if (!leaves) return;
+  $('#leafModalBody').innerHTML = '<div class="conflict-banner" id="modalConflict"></div>';
+  renderLeafList('#leafModalBody');
+  $('#leafModal').classList.add('show');
+  checkConflicts();
+}
+function closeLeafModal() { $('#leafModal').classList.remove('show'); }
+async function saveLeafModal() {
+  await api('/api/plan', 'POST', { plan: planSel });
+  closeLeafModal();
+  markSaved();
+  $('#statusText').textContent = '叶子档位已保存';
+}
+
+// ---------- 启动：自动恢复上次进度 ----------
+(async () => {
+  injectProjectPicker();
+  await loadProjects();
+  leaves = await api('/api/leaves');
+  loadOutline();
+  try {
+    const [st, d, plan] = await Promise.all([api('/api/state'), api('/api/draft'), api('/api/plan')]);
+    const hasDraft = d.draft && d.draft.trim().length > 0;
+    const hasPlan = plan && Object.keys(plan).length > 0;
+    const hasState = st.round > 0 || st.scene;
+    if (hasDraft || hasState) gotoView('editor');
+    else if (hasPlan) gotoView('leaves');
+    // 都没有 → 留在主页
+  } catch (e) {
+    // 忽略恢复错误，留在主页
+  }
+})();
+</script>
+</body>
+</html>
