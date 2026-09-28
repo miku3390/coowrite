@@ -1,0 +1,105 @@
+# coowrite 仓库改进建议 [opencode-opencode-mimo+建议]
+
+> 基于 GitHub 仓库 miku3390/coowrite 的完整审查，包含代码质量、项目结构、文档规范等方面的建议。
+
+---
+
+## 1. 移除 `server.py.bak`，修复 `.gitignore`
+
+**问题**：`server.py.bak` 是旧版本备份（5.7KB），不应存在于仓库中。当前 `.gitignore` 缺少 `*.bak`、`.zcode/`、`backup/`、`tests/` 等规则。
+
+**建议操作**：
+- 删除 `server.py.bak`
+- `.gitignore` 增加 `*.bak`、`server.py.bak`、`.zcode/`、`backup/`、`old/`、`tests/`、`*.egg-info/`、`.env`、`.venv/`
+
+---
+
+## 2. 中文文件名统一为英文
+
+**问题**：仓库存在 4 个中文命名的 `.md` 文件，在 Windows 上显示乱码，跨平台协作困难。
+
+**当前文件** → **建议命名**：
+- `修改意见.md` → `changelog.md`
+- `升级交接-给外部模型.md` → `upgrade-handover-external-model.md`
+- `命名规则.md` → `naming-rules.md`
+- `审核-给GLM-续写信号方案.md` → `review-glm-continue-signal-plan.md`
+
+---
+
+## 3. 添加单元测试
+
+**问题**：仓库没有任何测试文件，`server.py` 的核心函数均无测试覆盖。
+
+**建议操作**：
+- 创建 `tests/` 目录
+- 添加 `tests/test_server.py`，覆盖以下函数：
+  - `load_json` 缺失文件返回默认值
+  - `save_json` / `load_json` 往返一致性
+  - `proj_dir` / `fpath` 路径构造正确性
+  - `write_draft` / `read_draft` 读写一致性
+  - `write_draft` 创建 `draft_backup.md`
+  - `load_projects` 返回结构正确
+  - `difflib.SequenceMatcher` 的使用逻辑
+
+---
+
+## 4. 添加 LICENSE 和 CONTRIBUTING.md
+
+**问题**：README 提到"未指定任何认证"，项目无明确许可证。
+
+**建议操作**：
+- 添加 `LICENSE`（MIT License，版权持有者 `miku3390`）
+- 添加 `CONTRIBUTING.md`，包含：
+  - 项目结构和启动方式
+  - API 添加规范
+  - `leaves.json` 编写规则
+  - 数据文件格式说明
+  - Commit 风格指南
+  - Issue 报告模板
+
+---
+
+## 5. `server.py` 代码质量改进
+
+**问题**：
+- `load_json()` 在每个 API 端点中重复调用，无缓存
+- 缺少 CORS 头
+- 错误处理不一致
+- `continue_watcher.py` 与 `server.py` 逻辑重叠
+- 硬编码路径可改为 `pathlib`
+
+**建议**：在独立分支 `refactor/server` 中处理。
+
+---
+
+## 6. `index.html` 52KB 过大
+
+**问题**：单一 HTML 文件包含全部前端逻辑，难以维护。
+
+**建议**：拆分为 `static/css/` 和 `static/js/` 目录。
+
+---
+
+## 7. `leaves.json` 数据结构冗余
+
+**问题**：`presets` 中每项都重复了 `leaves` 字典，与顶层 `axis` 定义存在冗余。
+
+**建议**：统一数据结构，确保 `exclusive`/`synergy`/`conditions` 规则中的中文键值与 `axis` 中的 `id` 严格对应。
+
+---
+
+## 8. 其他待处理项
+
+- `refactor/server` — 减少重复代码、统一错误处理、添加 CORS
+- `refactor/server` — `continue_watcher.py` 合并或明确集成说明
+- `feat/frontend-split` — 拆分 `index.html`
+- `refactor/leaves-json` — 统一数据结构
+- `feat/api-docs` — 生成 OpenAPI 规范
+- `fix/encoding` — 确保中文跨平台正确显示
+- `feat/config` — 硬编码常量提取为配置文件
+- `feat/auth` — API 认证机制
+- `feat/backup` — `data/` 目录备份策略完善
+
+---
+
+*本建议基于仓库当前状态（main 分支）审查，于 2026-09-28 生成。*
