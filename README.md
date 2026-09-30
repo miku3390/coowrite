@@ -49,12 +49,15 @@ data/
 
 ## API
 
-全部返回 JSON，无鉴权，仅监听本机。作用于当前 active 项目；无 active 项目时 GET 返回空默认值，POST 返回 `400`。
+全部返回 JSON，无鉴权，仅监听本机。**只服务本机名**：Host 必须是 `127.0.0.1` / `localhost` / `::1`，跨源 Origin 的写请求一律 `403`（防 DNS rebinding 与恶意页面覆写稿件）。作用于当前 active 项目；无 active 项目时 GET 返回空默认值，POST 返回 `400`。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/`、`/index.html` | 前端页面 |
 | GET | `/api/leaves` | 42 个叶子定义（轴、权重、档位上限、联动规则、预制方案），与项目无关 |
+| GET | `/api/hermes-status` | Hermes 工作状态（只读观察 `~/.hermes/`）|
+| GET/POST | `/api/presets` | 全局自定义方案 |
+| POST | `/api/signal/continue` `/take` `/ack` | 续写信号链路（浏览器场景，配 `continue_watcher.py`）|
 | GET | `/api/projects` | 项目索引 |
 | POST | `/api/projects` | 新建项目并设为 active，body `{name}` |
 | POST | `/api/project/switch` | 切换 active，body `{id}` |
@@ -64,7 +67,7 @@ data/
 | GET/POST | `/api/state` | 轮次 / 场景 / 标签 / 建议 |
 | GET/POST | `/api/links` | 连接点图 |
 | GET | `/api/diffs` | diff 历史 |
-| POST | `/api/save` | 存稿 + 备份 + 生成 diff 记录，body `{draft, round}` |
+| POST | `/api/save` | 存稿 + 备份 + 生成 diff 记录，body `{draft}`。内容与当前稿一致时短路返回 `{ok, unchanged:true}`，不写盘、不轮转备份、不记 diff；有变化时返回 `{ok, diff_count, round}`，**回合数由服务端 +1**（请求体里的 `round` 不再采信） |
 | GET/POST | `/api/changes` | 语义变化记录（追加式） |
 
 ## 文档

@@ -7,7 +7,7 @@
 - 纯标准库，零依赖
 启动：python3 server.py [端口]  (默认 8338)
 """
-import json, os, re, sys, time, difflib, shutil, uuid, sqlite3
+import json, os, re, sys, time, difflib, shutil, threading, uuid, sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, unquote
 
@@ -25,6 +25,11 @@ BACKUP_KEEP = 5        # draft_backup.md 历史轮转保留版数（.1~.4 + 最�
 DIFFS_KEEP = 200       # diffs.json 最多保留条数
 DIFF_OPS_KEEP = 500    # 单条 diff 的 ops 上限（超过记 truncated）
 
+# /api/save 与 /api/state 的读-改-写互斥（多标签页、连点按钮都会并发进来）
+SAVE_LOCK = threading.Lock()
+# 只服务本机名（防 DNS rebinding）；同源 Origin 之外的跨源写请求一律拒绝
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
+
 # Hermes 状态观察（只读）：gateway_state.json + state.db 都在 HERMES_HOME 下
 HERMES_HOME = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
 HERMES_ACTIVE_WINDOW = 300.0   # 秒：最后消息距今 < 该值且非 stop 视为「写作中」
@@ -41,8 +46,11 @@ def load_json(path, default):
         return default
 
 def save_json(path, obj):
-    with open(path, "w", encoding="utf-8") as f:
+    """原子写：先写同目录临时文件再 rename，读者不会读到半截 JSON。"""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
 
 # ---------- 项目索引 ----------
 def _migrate_legacy():
@@ -111,11 +119,17 @@ def write_draft(pid, text):
         for i in range(BACKUP_KEEP - 2, 0, -1):
             src = fpath(pid, f"draft_backup.{i}.md")
             if os.path.exists(src):
-                shutil.move(src, fpath(pid, f"draft_backup.{i + 1}.md"))
+                try:
+                    shutil.move(src, fpath(pid, f"draft_backup.{i + 1}.md"))
+                except OSError:
+                    pass   # 轮转是尽力而为，别让它把整个保存请求打成 500
         # 最新备份 draft_backup.md → .1
         cur = fpath(pid, "draft_backup.md")
         if os.path.exists(cur):
-            shutil.move(cur, fpath(pid, "draft_backup.1.md"))
+            try:
+                shutil.move(cur, fpath(pid, "draft_backup.1.md"))
+            except OSError:
+                pass
         # 当前草稿 → 最新备份
         shutil.copy(p, fpath(pid, "draft_backup.md"))
     with open(p, "w", encoding="utf-8") as f:
@@ -228,7 +242,35 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    def _host_allowed(self):
+        """只服务本机名。防 DNS rebinding：恶意页面把域名指到 127.0.0.1 时 Host 还是它自己。"""
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host.startswith("["):
+            host = host.split("]")[0] + "]"
+        elif ":" in host:
+            host = host.rsplit(":", 1)[0]
+        return host in LOCAL_HOSTS
+
+    def _origin_allowed(self):
+        """跨源写请求一律拒绝；同源 fetch 不带 Origin，所以不带 Origin 的请求照常放行。"""
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        if not origin:
+            return True
+        m = re.match(r"^https?://(\[[^\]]+\]|[^/:]+)(:\d+)?$", origin)
+        return bool(m) and m.group(1) in LOCAL_HOSTS
+
+    def _guard(self):
+        if not self._host_allowed():
+            self._send(403, {"error": "bad host"})
+            return False
+        if not self._origin_allowed():
+            self._send(403, {"error": "cross-origin not allowed"})
+            return False
+        return True
+
     def do_GET(self):
+        if not self._guard():
+            return
         path = unquote(urlparse(self.path).path)
         pid = active_id()
         if path == "/" or path == "/index.html":
@@ -266,6 +308,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if not self._guard():
+            return
         path = unquote(urlparse(self.path).path)
         body = self._read_body()
         pid = active_id()
@@ -295,25 +339,39 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "no active project"})
                 return
             text = body.get("draft", "")
-            prev = read_draft(pid)
-            write_draft(pid, text)
-            prev_lines = prev.splitlines()
-            new_lines = text.splitlines()
-            sm = difflib.SequenceMatcher(None, prev_lines, new_lines)
-            ops = [{"tag": op, "a": prev_lines[i1:i2], "b": new_lines[j1:j2]}
-                   for op, i1, i2, j1, j2 in sm.get_opcodes() if op != "equal"]
-            # ops 不再截 20，保住改动信息；仅对极端情况设上限并留 truncated 标志
-            truncated = len(ops) > DIFF_OPS_KEEP
-            if truncated:
-                ops = ops[:DIFF_OPS_KEEP]
-            diffs = load_json(fpath(pid, "diffs.json"), [])
-            diffs.append({"t": time.strftime("%H:%M:%S"), "round": body.get("round", 0),
-                          "ops": ops, "truncated": truncated})
-            # diffs.json 限容：只留最近 DIFFS_KEEP 条
-            if len(diffs) > DIFFS_KEEP:
-                diffs = diffs[-DIFFS_KEEP:]
-            save_json(fpath(pid, "diffs.json"), diffs)
-            self._send(200, {"ok": True, "diff_count": len(ops)})
+            # 读-改-写整段串行化：并发保存会互相覆盖 diffs.json 与备份轮转
+            # （实测 10 并发只落 4 条记录，且 write_draft 抛 FileNotFoundError）
+            with SAVE_LOCK:
+                prev = read_draft(pid)
+                if text == prev:
+                    # 内容没变：不落盘、不轮转备份、不记 diff。
+                    # 否则连点几次「保存并继续」就能把改稿历史全冲成同一份当前稿。
+                    st = load_json(fpath(pid, "state.json"), {})
+                    self._send(200, {"ok": True, "diff_count": 0, "unchanged": True,
+                                     "round": int(st.get("round", 0) or 0)})
+                    return
+                write_draft(pid, text)
+                prev_lines = prev.splitlines()
+                new_lines = text.splitlines()
+                sm = difflib.SequenceMatcher(None, prev_lines, new_lines)
+                ops = [{"tag": op, "a": prev_lines[i1:i2], "b": new_lines[j1:j2]}
+                       for op, i1, i2, j1, j2 in sm.get_opcodes() if op != "equal"]
+                # ops 不再截 20，保住改动信息；仅对极端情况设上限并留 truncated 标志
+                truncated = len(ops) > DIFF_OPS_KEEP
+                if truncated:
+                    ops = ops[:DIFF_OPS_KEEP]
+                # 回合由服务端推进（前端从不自增，round 一直是 0）；客户端传的 round 不再采信
+                st = load_json(fpath(pid, "state.json"), {})
+                st["round"] = int(st.get("round", 0) or 0) + 1
+                save_json(fpath(pid, "state.json"), st)
+                diffs = load_json(fpath(pid, "diffs.json"), [])
+                diffs.append({"t": time.strftime("%H:%M:%S"), "round": st["round"],
+                              "ops": ops, "truncated": truncated})
+                # diffs.json 限容：只留最近 DIFFS_KEEP 条
+                if len(diffs) > DIFFS_KEEP:
+                    diffs = diffs[-DIFFS_KEEP:]
+                save_json(fpath(pid, "diffs.json"), diffs)
+            self._send(200, {"ok": True, "diff_count": len(ops), "round": st["round"]})
         elif path == "/api/plan":
             if not pid:
                 self._send(400, {"error": "no active project"})
@@ -330,8 +388,15 @@ class Handler(BaseHTTPRequestHandler):
             if not pid:
                 self._send(400, {"error": "no active project"})
                 return
-            save_json(fpath(pid, "state.json"), body.get("state", {}))
-            self._send(200, {"ok": True})
+            with SAVE_LOCK:
+                st = body.get("state", {})
+                if not isinstance(st, dict):
+                    st = {}
+                # 前端写 state（tags/advice）时不该把服务端已推进的回合数写回去
+                old = load_json(fpath(pid, "state.json"), {})
+                st["round"] = max(int(st.get("round", 0) or 0), int(old.get("round", 0) or 0))
+                save_json(fpath(pid, "state.json"), st)
+            self._send(200, {"ok": True, "round": st["round"]})
         elif path == "/api/outline":
             if not pid:
                 self._send(400, {"error": "no active project"})
@@ -380,9 +445,15 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"error": "not found"})
 
+class Server(ThreadingHTTPServer):
+    """request_queue_size 在 __init__（bind + listen）时生效，所以必须是类属性。"""
+    daemon_threads = True
+    request_queue_size = 64   # 默认 5：并发保存时多出来的连接会被直接拒
+
+
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8338
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    srv = Server(("127.0.0.1", port), Handler)
     print(f"协同写作服务: http://127.0.0.1:{port}")
     print(f"数据目录: {DATA}")
     srv.serve_forever()
