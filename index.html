@@ -180,7 +180,6 @@
     box-shadow: var(--shadow); padding: 18px 22px; margin-bottom: 16px;
   }
   .axis-block h3 { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
-  .axis-block .axis-desc { font-size: 11.5px; color: var(--sub); margin-bottom: 6px; }
   .conflict-banner {
     position: sticky;
     top: 0;
@@ -237,8 +236,6 @@
   }
   .leaf-item[data-axis="qual"] .leaf-val { color: var(--qual); }
   .leaf-item .leaf-conflict-flag { font-size: 10.5px; color: var(--warn); margin-left: 4px; }
-  .leaf-item.locked { opacity: .35; }
-  .leaf-item.locked input[type=range] { pointer-events: none; }
   .leaf-item.conflict {
     background: rgba(255,149,0,.06);
     border: 1px solid rgba(255,149,0,.35);
@@ -290,17 +287,6 @@
     border-color: var(--line);
     box-shadow: 0 -1px 4px rgba(0,0,0,.04);
   }
-  .tab .tab-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--accent); opacity: 0;
-  }
-  .tab.new .tab-dot { opacity: 1; }
-  .tab .tab-x {
-    font-size: 12px; color: var(--sub); opacity: 0;
-    padding: 0 2px; border-radius: 4px;
-  }
-  .tab:hover .tab-x { opacity: 1; }
-  .tab .tab-x:hover { background: rgba(0,0,0,.1); color: var(--ink); }
   textarea#editor {
     flex: 1; width: 100%;
     border: 1px solid var(--line);
@@ -325,16 +311,6 @@
     box-shadow: var(--shadow); padding: 14px;
   }
   .card h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
-  .advice { font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; max-height: 280px; overflow-y: auto; color: var(--ink); }
-  .links { font-size: 12px; }
-  .links .item {
-    border-left: 3px solid var(--qual); padding: 5px 9px; margin: 5px 0;
-    font-size: 11.5px; background: rgba(42,111,151,.06); border-radius: 0 6px 6px 0;
-  }
-  .links .item b { color: var(--qual); }
-  .budget-mini { font-size: 11.5px; }
-  .budget-mini .bar { height: 5px; border-radius: 3px; background: rgba(0,0,0,.08); margin: 4px 0 8px; overflow: hidden; }
-  .budget-mini .bar i { display: block; height: 100%; background: var(--conc); border-radius: 3px; transition: width .3s; }
 
   /* ---------- 字数统计 / diff 面板 / 导出 ---------- */
   #wordCount { margin-left: auto; font-variant-numeric: tabular-nums; }
@@ -368,35 +344,6 @@
   .hs-label { font-size: 12.5px; font-weight: 600; }
   .hs-meta { font-size: 11px; color: var(--sub); line-height: 1.6; }
   .hs-preview { font-size: 11px; color: var(--ink); line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 72px; overflow-y: auto; margin-top: 4px; }
-
-
-
-  /* ---------- 悬浮操作卡片 ---------- */
-  .float-card {
-    position: fixed;
-    right: 344px;
-    bottom: 22px;
-    z-index: 50;
-    background: rgba(255,255,255,.75);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border: 1px solid rgba(255,255,255,.5);
-    border-radius: 18px;
-    box-shadow: 0 8px 32px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.04);
-    padding: 10px 14px;
-    display: flex; align-items: center; gap: 8px;
-  }
-  .float-card .fc-btn {
-    border: none; border-radius: 980px;
-    padding: 8px 16px; font-size: 12.5px; font-weight: 600;
-    cursor: pointer; font-family: inherit;
-    background: rgba(0,0,0,.06); color: var(--ink);
-    transition: all .15s;
-  }
-  .float-card .fc-btn:hover { background: rgba(0,0,0,.1); }
-  .float-card .fc-btn.primary { background: var(--accent); color: #fff; }
-  .float-card .fc-btn.primary:hover { filter: brightness(1.08); }
-  .float-card .fc-btn:active { transform: scale(.96); }
 
   /* ---------- 弹窗 ---------- */
   .modal-overlay {
@@ -565,9 +512,10 @@
         <span class="scene-tag" id="sceneTag">未开始</span>
         <span class="hint" id="sceneName">（等待第一段）</span>
         <span class="hint" id="wordCount">0 字</span>
+        <button class="btn small" id="staleBar" style="display:none" onclick="reloadDraft()">稿件已被外部修改——点此加载最新稿</button>
       </div>
       <div class="tabs-bar" id="tabsBar"></div>
-      <textarea id="editor" placeholder="（等待 AI 写入第一段……）" oninput="updateWordCount()"></textarea>
+      <textarea id="editor" placeholder="（等待 AI 写入第一段……）" oninput="onEditorInput()"></textarea>
     </div>
     <div class="side">
       <div class="card hermes-status">
@@ -645,7 +593,14 @@ async function api(path, method='GET', body=null) {
 
 // ---------- 视图切换 ----------
 const VIEWS = ['home', 'outline', 'leaves', 'editor'];
+let currentView = 'home';
 function gotoView(name) {
+  // 脏修改保护：编辑页有未保存内容时离开 = 静默丢字（往返叶子选型曾中招）。
+  // confirm 在 Electron 可用（被禁的只有 prompt）
+  if (currentView === 'editor' && name !== 'editor' && dirty) {
+    if (!confirm('编辑区有未保存的修改，离开将丢失。确定离开？')) return;
+  }
+  currentView = name;
   VIEWS.forEach(v => document.getElementById('view-' + v).classList.toggle('active', v === name));
   if (name === 'outline') loadOutline();
   if (name === 'leaves') loadLeavesView();
@@ -670,7 +625,7 @@ async function loadProjects() {
   const p = await api('/api/projects');
   document.querySelectorAll('.proj-sel').forEach(s => {
     s.innerHTML = p.items.map(it =>
-      `<option value="${it.id}" ${it.id === p.active ? 'selected' : ''}>${it.name}</option>`
+      `<option value="${escapeHtml(it.id)}"${it.id === p.active ? ' selected' : ''}>${escapeHtml(it.name)}</option>`
     ).join('') || '<option value="">（无项目）</option>';
   });
   return p;
@@ -734,10 +689,12 @@ async function loadOutline() {
 
 // ---------- 标签 ----------
 function renderTags() {
-  const list = PRESET_TAGS.map(t =>
-    `<span class="tag ${tags.includes(t)?'on':''}" onclick="toggleTag('${t}')">${t}</span>`
+  // 自定义标签也要渲染（曾只渲染 PRESET_TAGS：自定义标签加了看不见、删不掉）
+  const all = PRESET_TAGS.slice();
+  tags.forEach(t => { if (!all.includes(t)) all.push(t); });
+  $('#tagList').innerHTML = all.map(t =>
+    `<span class="tag${tags.includes(t) ? ' on' : ''}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`
   ).join('');
-  $('#tagList').innerHTML = list;
 }
 function toggleTag(t) {
   const i = tags.indexOf(t);
@@ -751,6 +708,22 @@ function addTag() {
   $('#tagInput').value = '';
   renderTags(); checkConflicts();
 }
+// 事件委托：标签/方案/项目名都是用户输入，禁止内联 onclick 字符串插值
+// （自定义标签填 `');alert(1);//` 曾可执行任意 JS，方案名含双引号会砸坏 DOM）
+$('#tagList').addEventListener('click', e => {
+  const el = e.target.closest('.tag');
+  if (el) toggleTag(el.dataset.tag);
+});
+$('#presetList').addEventListener('click', e => {
+  const el = e.target.closest('.preset');
+  if (el) applyPreset(el.dataset.name);
+});
+$('#customPresetList').addEventListener('click', e => {
+  const el = e.target.closest('[data-name]');
+  if (!el) return;
+  if (el.classList.contains('cp-x')) deleteCustomPreset(el.dataset.name);
+  else applyCustomPreset(el.dataset.name);
+});
 
 // ---------- 叶子（滑块渲染） ----------
 function leafSliderHtml(lf, value) {
@@ -787,7 +760,7 @@ function renderLeafList(container) {
   }
   $(container).innerHTML = html;
   if (keep) $(container).insertBefore(keep, $(container).firstChild);
-  updateLocked();
+  updateConflictFlags();
 }
 function findLeaf(id) {
   for (const key of ['conc','qual'])
@@ -804,11 +777,11 @@ function onLeafSlide(id, val, el) {
     const lf = findLeaf(id);
     if (lf) vEl.style.color = lf.axis === 'conc' ? 'var(--conc)' : 'var(--qual)';
   }
-  updateLocked();
+  updateConflictFlags();
   checkConflicts();
 }
-function updateLocked() {
-  // 软约束：互斥对不再硬锁，改为冲突态（橙框提示，仍可调）
+function updateConflictFlags() {
+  // 软约束：互斥对不硬锁，只做冲突态提示（橙框，仍可调）
   for (const [a, b] of (leaves.rules.exclusive || [])) {
     conflictFlag(b, (planSel[a] || 0) >= 4);
     conflictFlag(a, (planSel[b] || 0) >= 4);
@@ -869,9 +842,9 @@ function checkConflicts() {
 function renderPresets() {
   if (!leaves || !leaves.presets) { $('#presetList').innerHTML = ''; return; }
   $('#presetList').innerHTML = leaves.presets.map(p =>
-    `<div class="preset" onclick="applyPreset('${p.name}')">
-       <div class="p-name">${p.name}</div>
-       <div class="p-desc">${p.desc}</div>
+    `<div class="preset" data-name="${escapeHtml(p.name)}">
+       <div class="p-name">${escapeHtml(p.name)}</div>
+       <div class="p-desc">${escapeHtml(p.desc || '')}</div>
      </div>`
   ).join('');
 }
@@ -909,8 +882,8 @@ function renderCustomPresets() {
   if (!customPresets.length) { el.innerHTML = '<span class="diff-empty">（暂无）</span>'; return; }
   el.innerHTML = customPresets.map(p =>
     `<div class="custom-preset">
-       <span class="cp-name" onclick="applyCustomPreset('${p.name.replace(/'/g, "\\'")}')">${p.name}</span>
-       <span class="cp-x" onclick="deleteCustomPreset('${p.name.replace(/'/g, "\\'")}')">✕</span>
+       <span class="cp-name" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+       <span class="cp-x" data-name="${escapeHtml(p.name)}">✕</span>
      </div>`
   ).join('');
 }
@@ -956,6 +929,8 @@ let draft = '';
 let segs = [];       // 段落：[{start, end, from, to}]
 let activeTab = 0;   // 当前活动标签
 let projectName = '未命名文章';
+let draftRev = 0;    // 稿件修订号（乐观锁基准），见 saveAll / initEditor
+let dirty = false;   // 编辑区有未保存修改
 
 function parseSegments(text) {
   const re = /<!--\s*\[SCENE:[^\]]+\]\s*-->/g;
@@ -970,10 +945,15 @@ function parseSegments(text) {
   return segs;
 }
 function mergeOldest(segs) {
-  // 标签上限 9：超出把最开始两个合并，直到 ≤9
+  // 标签上限 9：超出把最开始两个「真合并」——删掉后段自己的标记、写入一个
+  // 「第X-Y段」合成标记。假合并（纯拼接）会让编辑区露出裸标记，且每次保存
+  // 重新解析又弹回原段数；合成标记同时是日后「再拆分」功能的切回入口。
   while (segs.length > 9) {
     const a = segs[0], b = segs[1];
-    segs = [{ start: a.start, end: b.end, from: a.from, to: b.to, content: a.content + b.content }, ...segs.slice(2)];
+    const bodyB = b.content.replace(/^\s*<!--\s*\[SCENE:[^\]]+\]\s*-->\s*\n?/, '');
+    const merged = a.content.replace(/\s*$/, '\n') +
+      `<!-- [SCENE:第${a.from}-${b.to}段] -->\n` + bodyB;
+    segs = [{ start: a.start, end: b.end, from: a.from, to: b.to, content: merged }, ...segs.slice(2)];
   }
   return segs;
 }
@@ -1007,6 +987,11 @@ function updateWordCount() {
   const segLen = $('#editor').value.length;
   const fullLen = currentFullText().length;
   $('#wordCount').textContent = `本段 ${segLen} 字 · 全文 ${fullLen} 字`;
+}
+function onEditorInput() {
+  updateWordCount();
+  dirty = true;
+  markUnsaved();
 }
 
 // ---------- Hermes 状态轮询 ----------
@@ -1075,7 +1060,8 @@ async function renderDiffs() {
   }).join('');
 }
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  // 同时用于文本节点与双引号属性值：覆盖 5 个字符（含单引号）
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 async function jumpToDiff(di, oi, li, isDel) {
   // 把点击的 diff 行还原到当前全文的行号 → 段 → 光标定位
@@ -1106,11 +1092,10 @@ async function jumpToDiff(di, oi, li, isDel) {
     }
   }
 }
-// 缓存最近 diff 的 ops 顺序数组，供 jumpToDiff 反查行
-let _diffOpsCache = [];
 async function diffLines(di, oi, li, isDel) {
-  try { _diffOpsCache = await api('/api/diffs'); } catch (e) { _diffOpsCache = []; }
-  const recent = (Array.isArray(_diffOpsCache) ? _diffOpsCache : []).slice(-5).reverse();
+  let list = [];
+  try { list = await api('/api/diffs'); } catch (e) { list = []; }
+  const recent = (Array.isArray(list) ? list : []).slice(-5).reverse();
   const d = recent[di];
   if (!d || !d.ops || !d.ops[oi]) return null;
   const op = d.ops[oi];
@@ -1138,6 +1123,7 @@ async function initEditor() {
   state = await api('/api/state');
   const d = await api('/api/draft');
   draft = d.draft || '';
+  draftRev = typeof d.rev === 'number' ? d.rev : 0;   // 乐观锁基准，见 saveAll
   // 存 active 项目名（导出文件名用）
   try {
     const p = await api('/api/projects');
@@ -1155,35 +1141,69 @@ async function initEditor() {
   $('#sceneName').textContent = state.scene ? '' : '（等待第一段）';
   updateWordCount();
   renderDiffs();
-  markUnsaved();
+  dirty = false;
+  markSaved();
+  hideStaleBar();
 }
 function markUnsaved() { $('#statusText').textContent = '有未保存修改'; $('#statusDot').style.background = 'var(--warn)'; }
 function markSaved() { $('#statusText').textContent = '已保存'; $('#statusDot').style.background = 'var(--ok)'; }
+function showStaleBar(serverRev) {
+  // 稿件已被外部推进（AI 可能已写入新段落）：以服务端 rev 为准，不覆盖
+  if (typeof serverRev === 'number') draftRev = serverRev;
+  const bar = $('#staleBar');
+  if (bar) bar.style.display = '';
+}
+function hideStaleBar() {
+  const bar = $('#staleBar');
+  if (bar) bar.style.display = 'none';
+}
+async function reloadDraft() {
+  hideStaleBar();
+  dirty = false;
+  await initEditor();
+}
 async function saveAll() {
-  // 当前编辑内容存回活动段，然后合并各段为全文保存
-  if (activeTab < segs.length) segs[activeTab].content = $('#editor').value;
-  const text = segs.map(s => s.content).join('');
-  const res = await api('/api/save', 'POST', { draft: text, round: state.round || 0 });
-  if (!res || !res.ok) { markUnsaved(); $('#statusText').textContent = '保存失败'; return; }
-  draft = text;
-  segs = mergeOldest(parseSegments(draft));
-  if (activeTab >= segs.length) activeTab = segs.length - 1;
-  renderTabs();
-  $('#editor').value = segs.length ? segs[activeTab].content : '';
-  updateWordCount();
-  renderDiffs();
-  markSaved();
-  const contText = `继续协同写作：第 ${state.round || 0} 回合「${state.scene || '（未命名）'}」。请读取最新稿子（draft.md）续写下一段，写回后告诉我。`;
-  if (window.workbenchBridge?.continue) {
-    // Electron 桌面端：走宿主桥（3939 信令）。此时不发 tmux 信号——双通道并存会让
-    // 桌面端会话和 tmux 会话同时续写同一篇稿，draft.md 互相覆盖。
-    window.workbenchBridge.continue({ text: contText });
-    $('#statusText').textContent = '已保存，已通知桌面端续写';
-  } else {
-    // 浏览器场景：发信号给 continue_watcher.py（tmux 注入 /queue [auto] 续写指令）
-    api('/api/signal/continue', 'POST', { text: contText, round: state.round || 0 }).catch(() => {});
-    $('#statusText').textContent = '已保存，续写信号已发出（等待注入）';
-    pollContinueAck(Date.now());
+  // 防连点：保存期间禁用按钮（async 连点 = 并发请求）
+  const btn = $('#saveBtn2');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    // 当前编辑内容存回活动段，然后合并各段为全文保存
+    if (activeTab < segs.length) segs[activeTab].content = $('#editor').value;
+    const text = segs.map(s => s.content).join('');
+    const res = await api('/api/save', 'POST', { draft: text, expected_rev: draftRev });
+    if (res && res.error === 'stale') {
+      showStaleBar(res.rev);
+      $('#statusText').textContent = '稿件已被外部修改，未覆盖';
+      return;
+    }
+    if (!res || !res.ok) { markUnsaved(); $('#statusText').textContent = '保存失败'; return; }
+    state.round = res.round;   // 回合由服务端推进，必须取返回值（曾恒落后一拍）
+    if (typeof res.rev === 'number') draftRev = res.rev;
+    draft = text;
+    dirty = false;
+    segs = mergeOldest(parseSegments(draft));
+    if (activeTab >= segs.length) activeTab = segs.length - 1;
+    renderTabs();
+    $('#editor').value = segs.length ? segs[activeTab].content : '';
+    updateWordCount();
+    renderDiffs();
+    markSaved();
+    hideStaleBar();
+    const contText = `继续协同写作：第 ${state.round || 0} 回合「${state.scene || '（未命名）'}」。请读取最新稿子（draft.md）续写下一段；写回请走 POST /api/ai-write（带 expected_rev），不要直接改 draft.md，写回后告诉我。`;
+    if (window.workbenchBridge?.continue) {
+      // Electron 桌面端：走宿主桥（3939 信令）。此时不发 tmux 信号——双通道并存会让
+      // 桌面端会话和 tmux 会话同时续写同一篇稿，draft.md 互相覆盖。
+      window.workbenchBridge.continue({ text: contText });
+      $('#statusText').textContent = res.unchanged ? '内容无变化，已通知桌面端续写' : '已保存，已通知桌面端续写';
+    } else {
+      // 浏览器场景：发信号给 continue_watcher.py（tmux 注入 /queue [auto] 续写指令）
+      api('/api/signal/continue', 'POST', { text: contText, round: state.round || 0 }).catch(() => {});
+      $('#statusText').textContent = res.unchanged ? '内容无变化，续写信号已发出' : '已保存，续写信号已发出（等待注入）';
+      pollContinueAck(Date.now());
+    }
+  } finally {
+    btn.disabled = false;
   }
 }
 async function pollContinueAck(startMs) {
@@ -1237,6 +1257,10 @@ async function saveLeafModal() {
     // 忽略恢复错误，留在主页
   }
 })();
+// 刷新/关闭前脏修改拦截（「刷新自动恢复」恢复的是数据深度，不含未保存的字）
+window.addEventListener('beforeunload', e => {
+  if (dirty) { e.preventDefault(); e.returnValue = ''; }
+});
 </script>
 </body>
 </html>
