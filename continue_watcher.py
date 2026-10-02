@@ -9,6 +9,10 @@
 - 注入前 capture-pane 检查输入行：非空（用户正在打字）则跳过本轮，信号放回重试
 - 注入文本折成单行，send-keys 加 `--`，避免文本内换行提前提交 / 被当选项
 - 注入完成回写 ack（POST /api/signal/continue/ack），前端显示真实注入状态
+- 单实例锁（flock）：两个 watcher 会双重注入同一窗格
+- 信号放回前比对 ts：不覆盖等待期间网页新发出的信号
+- 启动只清过期残留信号：网页先保存、watcher 后启动时新鲜信号不被吞
+- 探测失败退避重试 5 次：tmux/服务启动顺序有偏差时自愈
 
 纯标准库，零依赖。运行在 WSL（与 tmux 同环境）。
 
@@ -26,8 +30,15 @@ import sys
 import time
 import urllib.request
 
+try:
+    import fcntl   # POSIX 单实例锁；Windows（剪贴板备用模式）没有，跳过
+except ImportError:
+    fcntl = None
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 SIGNAL_FILE = os.path.join(BASE, "data", "continue.signal")
+LOCK_FILE = os.path.join(BASE, "data", "continue.watcher.lock")
+SIGNAL_TTL = 60.0   # 与服务端 SIGNAL_TTL 一致
 CLIP_EXE_CANDIDATES = ["/mnt/c/Windows/System32/clip.exe", r"C:\Windows\System32\clip.exe"]
 
 # busy 提示行后缀（输入行为空时 Hermes 会在 ❯ 后显示的暗色提示，不算"用户在打字"）
@@ -58,11 +69,41 @@ def send_ack(port, ok, pane="", err=""):
 
 
 def put_signal_back(sig):
+    """信号放回（跳过本轮重试用）。回写前比对 ts：文件里已有更新的信号时
+    不动它——覆盖写曾会把等待期间网页新发出的信号冲掉。"""
     try:
-        with open(SIGNAL_FILE, "w", encoding="utf-8") as f:
+        if os.path.exists(SIGNAL_FILE):
+            try:
+                with open(SIGNAL_FILE, encoding="utf-8") as f:
+                    cur = json.load(f)
+                if cur.get("ts", 0) > sig.get("ts", 0):
+                    return
+            except Exception:
+                pass
+        tmp = SIGNAL_FILE + ".back"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(sig, f, ensure_ascii=False)
+        os.replace(tmp, SIGNAL_FILE)
     except OSError:
         pass
+
+
+def acquire_single_instance():
+    """flock 单实例锁：两个 watcher 会双重注入同一窗格。无 fcntl（Windows
+    剪贴板模式）或锁文件写不了时不阻塞主流程。"""
+    if fcntl is None:
+        return True
+    try:
+        os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+        fp = open(LOCK_FILE, "w")
+        try:
+            fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fp.close()
+            return False
+        return True   # fp 故意不关闭：锁随进程存活
+    except OSError:
+        return True
 
 
 # ---------- 窗格探测：进程树匹配（pane_current_command 只会是 python，不可用） ----------
@@ -165,21 +206,39 @@ def main():
     ap.add_argument("--clipboard", action="store_true", help="备用模式：写 Windows 剪贴板")
     args = ap.parse_args()
 
+    if not acquire_single_instance():
+        print("[watcher] 已有另一个 watcher 实例在运行（data/continue.watcher.lock），退出。")
+        sys.exit(1)
+
     pane = None
     if not args.clipboard:
-        panes = list_panes()
-        pane = args.target or find_hermes_pane(panes)
+        if args.target:
+            pane = args.target
+        else:
+            # 探测退避重试：tmux/服务/窗格启动顺序稍有偏差时自愈，而不是直接退出
+            for attempt in range(1, 6):
+                pane = find_hermes_pane(list_panes())
+                if pane:
+                    break
+                print(f"[watcher] 未探测到跑 hermes 的 tmux 窗格（第 {attempt}/5 次），2s 后重试…")
+                time.sleep(2)
         if not pane:
+            panes = list_panes()
             print("[watcher] 未探测到跑 hermes 的 tmux 窗格。当前窗格：")
             for p in panes:
                 print(f"  {p['id']}  pid={p['pid']}  cmd={p['cmd']}  tree_root={_cmdline(p['pid'])[:60]}")
             print("请用 --target %%N 指定窗格后重试。")
             sys.exit(1)
 
-    # 启动时清一次残留信号，避免刚起来就消费陈旧指令（服务端 TTL 也会兜底）
+    # 启动只清理已过期的残留信号：网页先保存、watcher 后启动时，新鲜信号
+    # 应被立即消费注入，不能吞掉（读不了/不存在交给服务端 take 的 TTL 兜底）
     try:
-        os.remove(SIGNAL_FILE)
-    except OSError:
+        with open(SIGNAL_FILE, encoding="utf-8") as f:
+            old = json.load(f)
+        if time.time() - old.get("ts", 0) > SIGNAL_TTL:
+            os.remove(SIGNAL_FILE)
+            print("[watcher] 已清理一条过期残留信号")
+    except Exception:
         pass
 
     mode = "剪贴板" if args.clipboard else f"tmux:{pane}"

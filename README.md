@@ -21,6 +21,7 @@
 ```bash
 python3 server.py          # 默认端口 8338
 python3 server.py 9000     # 或用参数换端口
+python3 selftest.py        # 回归自检（不碰 data/，随机端口）
 ```
 
 然后浏览器打开 <http://127.0.0.1:8338/>
@@ -37,11 +38,11 @@ data/
   p_<uuid12>/                   # 每篇文章一个目录
     draft.md                    # 全文，每段以 <!-- [SCENE:名] --> 开头
     draft_backup.md             # 每次写入前的上一版
-    diffs.json                  # 保存时生成的行级 diff
-    changes.json                # 语义变化记录（AI 读 diff 后写入）
+    diffs.json                  # 保存/写回时生成的行级 diff（含 source: user/ai）
+    changes.json                # 语义变化记录（AI 读 diff 后写入，限 200 条）
     plan.json                   # 叶子目标档位（预算表）
     outline.json                # 文章规划表单
-    state.json                  # 轮次 / 场景 / 标签 / 建议
+    state.json                  # 轮次 round / 修订号 rev / 场景 / 标签 / 建议
     links.json                  # 连接点图（伏笔与设定影响关系）
 ```
 
@@ -55,20 +56,21 @@ data/
 |---|---|---|
 | GET | `/`、`/index.html` | 前端页面 |
 | GET | `/api/leaves` | 42 个叶子定义（轴、权重、档位上限、联动规则、预制方案），与项目无关 |
-| GET | `/api/hermes-status` | Hermes 工作状态（只读观察 `~/.hermes/`）|
+| GET | `/api/hermes-status` | Hermes 工作状态（只读观察 `~/.hermes/`，只匹配协同写作相关会话）|
 | GET/POST | `/api/presets` | 全局自定义方案 |
 | POST | `/api/signal/continue` `/take` `/ack` | 续写信号链路（浏览器场景，配 `continue_watcher.py`）|
 | GET | `/api/projects` | 项目索引 |
 | POST | `/api/projects` | 新建项目并设为 active，body `{name}` |
 | POST | `/api/project/switch` | 切换 active，body `{id}` |
-| GET/POST | `/api/draft` | 全文读写 |
+| GET/POST | `/api/draft` | 全文读写；GET 返回 `{draft, rev}`，`rev` 是稿件修订号 |
 | GET/POST | `/api/plan` | 叶子预算表 |
 | GET/POST | `/api/outline` | 规划表单 |
-| GET/POST | `/api/state` | 轮次 / 场景 / 标签 / 建议 |
+| GET/POST | `/api/state` | 轮次 / 修订号 / 场景 / 标签 / 建议（round、rev 以服务端为准）|
 | GET/POST | `/api/links` | 连接点图 |
-| GET | `/api/diffs` | diff 历史 |
-| POST | `/api/save` | 存稿 + 备份 + 生成 diff 记录，body `{draft}`。内容与当前稿一致时短路返回 `{ok, unchanged:true}`，不写盘、不轮转备份、不记 diff；有变化时返回 `{ok, diff_count, round}`，**回合数由服务端 +1**（请求体里的 `round` 不再采信） |
-| GET/POST | `/api/changes` | 语义变化记录（追加式） |
+| GET | `/api/diffs` | diff 历史（含 `source: user/ai`）|
+| POST | `/api/save` | 存稿 + 备份 + 生成 diff 记录，body `{draft, expected_rev?}`。内容与当前稿一致时短路返回 `{ok, unchanged:true}`；带 `expected_rev` 且稿件已被对方（AI/别的标签页）推进时返回 `409 {error:"stale", rev}`，冲突交给人裁决；有变化时返回 `{ok, diff_count, round, rev}`，**回合数与修订号由服务端 +1**（请求体里的 `round` 不再采信） |
+| POST | `/api/ai-write` | **AI 写回专用通道**，body `{draft, expected_rev?}`。与用户保存同一套备份轮转 + diff 记录（`source:"ai"`），杜绝直接改 `draft.md` 的无账覆盖 |
+| GET/POST | `/api/changes` | 语义变化记录（追加式，限最近 200 条） |
 
 ## 文档
 
@@ -82,7 +84,8 @@ data/
 | `index.html` | 单页前端：四个视图 + 三个弹窗同在一个 DOM，原生 JS |
 | `server.py` | 后端：标准库 `http.server`，静态页 + JSON API |
 | `leaves.json` | 42 个叶子（评价指标）定义与联动规则 |
-| `server.py.bak` | 单项目时代的旧版服务，仅作追溯 |
+| `continue_watcher.py` | 续写信号监视器：消费信号并注入 tmux 里的 Hermes（单实例锁） |
+| `selftest.py` | 零依赖回归自检：`python3 selftest.py`，随机端口写临时沙箱，不碰 `data/` |
 
 ## 许可
 
