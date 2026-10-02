@@ -46,6 +46,14 @@ def load_json(path, default):
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
+    except json.JSONDecodeError:
+        # 文件损坏：先隔离留证再返回默认值。静默吞掉的话，下一次保存会拿
+        # 默认值当基线写回去，把真实的 diff 历史/项目索引整个覆盖掉。
+        try:
+            os.replace(path, "%s.corrupt-%d" % (path, int(time.time())))
+        except OSError:
+            pass
+        return default
     except Exception:
         return default
 

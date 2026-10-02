@@ -52,8 +52,11 @@
   .step-tags .st {
     font-size: 11px; padding: 3px 12px; border-radius: 980px;
     background: rgba(0,0,0,.05); color: var(--sub); font-weight: 500;
+    cursor: pointer; user-select: none; transition: background .12s, color .12s;
   }
-  .step-tags .st.on { background: var(--accent); color: #fff; }
+  .step-tags .st:hover { background: rgba(0,0,0,.09); color: var(--ink); }
+  .step-tags .st.on { background: var(--accent); color: #fff; cursor: default; }
+  .step-tags .st.on:hover { background: var(--accent); color: #fff; }
 
   /* ---------- 主页 ---------- */
   #view-home .home-body {
@@ -149,6 +152,7 @@
     min-width: 110px;
   }
   .preset:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .preset.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
   .preset .p-name { font-size: 12.5px; font-weight: 600; }
   .preset .p-desc { font-size: 10.5px; color: var(--sub); margin-top: 2px; }
 
@@ -330,6 +334,8 @@
   .custom-preset-box { margin-top: 4px; }
   .custom-preset { display: flex; align-items: center; gap: 6px; padding: 5px 0; }
   .custom-preset .cp-name { font-size: 12px; font-weight: 600; cursor: pointer; }
+  .custom-preset.on .cp-name { color: var(--accent); }
+  .custom-preset.on .cp-name::after { content: " ✓"; }
   .custom-preset .cp-name:hover { color: var(--accent); }
   .custom-preset .cp-x { font-size: 11px; color: var(--sub); cursor: pointer; padding: 0 4px; border-radius: 4px; }
   .custom-preset .cp-x:hover { background: rgba(0,0,0,.08); color: var(--accent); }
@@ -404,7 +410,7 @@
 <div class="view" id="view-outline">
   <div class="topbar">
     <h1>协同写作工作台</h1>
-    <div class="step-tags"><span class="st on">① 规划</span><span class="st">② 叶子选型</span><span class="st">③ 协同写作</span></div>
+    <div class="step-tags"><span class="st on" onclick="gotoStep('outline')">① 规划</span><span class="st" onclick="gotoStep('leaves')">② 叶子选型</span><span class="st" onclick="gotoStep('editor')">③ 协同写作</span></div>
     <div class="spacer"></div>
   </div>
   <div class="form-body">
@@ -452,7 +458,7 @@
 <div class="view" id="view-leaves">
   <div class="topbar">
     <h1>协同写作工作台</h1>
-    <div class="step-tags"><span class="st">① 规划</span><span class="st on">② 叶子选型</span><span class="st">③ 协同写作</span></div>
+    <div class="step-tags"><span class="st" onclick="gotoStep('outline')">① 规划</span><span class="st on" onclick="gotoStep('leaves')">② 叶子选型</span><span class="st" onclick="gotoStep('editor')">③ 协同写作</span></div>
     <div class="spacer"></div>
   </div>
   <div class="leaves-body">
@@ -498,7 +504,7 @@
 <div class="view" id="view-editor">
   <div class="topbar">
     <h1>协同写作工作台</h1>
-    <div class="step-tags"><span class="st">① 规划</span><span class="st">② 叶子选型</span><span class="st on">③ 协同写作</span></div>
+    <div class="step-tags"><span class="st" onclick="gotoStep('outline')">① 规划</span><span class="st" onclick="gotoStep('leaves')">② 叶子选型</span><span class="st on" onclick="gotoStep('editor')">③ 协同写作</span></div>
     <div class="spacer"></div>
     <span class="status-dot" id="statusDot"></span>
     <span id="statusText" style="font-size:12px;color:var(--sub)">草稿未保存</span>
@@ -581,6 +587,7 @@ const $ = s => document.querySelector(s);
 let leaves = null, state = {};
 let planSel = {};
 let tags = [];
+let activePreset = null;   // 最近应用的方案名；选型一旦被手动改动即清除（UI 选中态依据）
 
 const PRESET_TAGS = ['伪娘','放尿','调教','NTR','露出','群交','纯爱','网调','失禁','寸止','强制高潮','束缚','野外','药物','初夜','仙侠','古风','逆后宫','拘束','口交','肛交','羞耻','记录','远程','主从','堕落','虐恋','和风','花街','暗黑','灵异','校园'];
 
@@ -594,6 +601,10 @@ async function api(path, method='GET', body=null) {
 // ---------- 视图切换 ----------
 const VIEWS = ['home', 'outline', 'leaves', 'editor'];
 let currentView = 'home';
+function gotoStep(name) {
+  // 顶栏步骤标签导航：点当前步不做任何事（防止把填了一半的表单/编辑重载掉）
+  if (name !== currentView) gotoView(name);
+}
 function gotoView(name) {
   // 脏修改保护：编辑页有未保存内容时离开 = 静默丢字（往返叶子选型曾中招）。
   // confirm 在 Electron 可用（被禁的只有 prompt）
@@ -699,6 +710,9 @@ function renderTags() {
 function toggleTag(t) {
   const i = tags.indexOf(t);
   if (i >= 0) tags.splice(i, 1); else tags.push(t);
+  activePreset = null;
+  renderPresets();
+  renderCustomPresets();
   renderTags(); checkConflicts();
 }
 function addTag() {
@@ -706,6 +720,9 @@ function addTag() {
   if (!v) return;
   if (!PRESET_TAGS.includes(v) && !tags.includes(v)) tags.push(v);
   $('#tagInput').value = '';
+  activePreset = null;
+  renderPresets();
+  renderCustomPresets();
   renderTags(); checkConflicts();
 }
 // 事件委托：标签/方案/项目名都是用户输入，禁止内联 onclick 字符串插值
@@ -771,6 +788,9 @@ function findLeaf(id) {
 function onLeafSlide(id, val, el) {
   const v = parseInt(val) || 0;
   planSel[id] = v;
+  activePreset = null;   // 手动改动选型 → 撤销方案的选中态
+  renderPresets();
+  renderCustomPresets();
   const vEl = document.getElementById('val-' + id);
   if (vEl) {
     vEl.textContent = planSel[id] || '—';
@@ -842,7 +862,7 @@ function checkConflicts() {
 function renderPresets() {
   if (!leaves || !leaves.presets) { $('#presetList').innerHTML = ''; return; }
   $('#presetList').innerHTML = leaves.presets.map(p =>
-    `<div class="preset" data-name="${escapeHtml(p.name)}">
+    `<div class="preset${p.name === activePreset ? ' on' : ''}" data-name="${escapeHtml(p.name)}">
        <div class="p-name">${escapeHtml(p.name)}</div>
        <div class="p-desc">${escapeHtml(p.desc || '')}</div>
      </div>`
@@ -857,6 +877,9 @@ function applyPresetObj(p) {
   planSel = Object.assign({}, p.leaves);
   // 标签替换为 preset 推荐（不保留旧标签）
   tags = (p.tags || []).slice();
+  activePreset = p.name;   // 选中态保持到选型被手动改动为止
+  renderPresets();
+  renderCustomPresets();
   renderTags();
   renderLeafList('#leavesBody');
   checkConflicts();
@@ -864,6 +887,9 @@ function applyPresetObj(p) {
 function resetLeaves() {
   planSel = {};
   tags = [];
+  activePreset = null;
+  renderPresets();
+  renderCustomPresets();
   renderTags();
   renderLeafList('#leavesBody');
   checkConflicts();
@@ -881,7 +907,7 @@ function renderCustomPresets() {
   if (!el) return;
   if (!customPresets.length) { el.innerHTML = '<span class="diff-empty">（暂无）</span>'; return; }
   el.innerHTML = customPresets.map(p =>
-    `<div class="custom-preset">
+    `<div class="custom-preset${p.name === activePreset ? ' on' : ''}">
        <span class="cp-name" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
        <span class="cp-x" data-name="${escapeHtml(p.name)}">✕</span>
      </div>`
@@ -909,6 +935,7 @@ async function loadLeavesView() {
   if (!leaves) leaves = await api('/api/leaves');
   const saved = await api('/api/plan');
   planSel = Object.assign({}, saved);
+  activePreset = null;   // 重进选型页一律按「无方案选中」处理
   const st = await api('/api/state');
   tags = (st.tags || []).slice();
   renderPresets();

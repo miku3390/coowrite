@@ -267,6 +267,19 @@ class SaveJsonConcurrency(unittest.TestCase):
         with open(path, encoding="utf-8") as f:
             self.assertIsInstance(json.load(f), dict)
 
+    def test_corrupt_json_quarantined(self):
+        """损坏的 JSON 必须先隔离再回默认值——静默吞掉会让下次保存覆盖真实历史"""
+        d = tempfile.mkdtemp(prefix="cw-cj-")
+        p = os.path.join(d, "x.json")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write('{"broken"')
+        self.assertEqual(SRV.load_json(p, {"d": 1}), {"d": 1})
+        self.assertFalse(os.path.exists(p), "原文件应已被改名隔离")
+        quarantined = [f for f in os.listdir(d) if f.startswith("x.json.corrupt-")]
+        self.assertEqual(len(quarantined), 1)
+        with open(os.path.join(d, quarantined[0]), encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"broken"')
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
