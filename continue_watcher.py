@@ -215,13 +215,23 @@ def main():
         if args.target:
             pane = args.target
         else:
-            # 探测退避重试：tmux/服务/窗格启动顺序稍有偏差时自愈，而不是直接退出
-            for attempt in range(1, 6):
+            # 探测退避重试：先 5 次快试（2s），之后转入 10s 慢轮询常驻等待——
+            # 用户常是「先起 watcher、后起 hermes」，直接退出会让信号链路悄悄失效
+            found_at = None
+            attempt = 0
+            while True:
+                attempt += 1
                 pane = find_hermes_pane(list_panes())
                 if pane:
                     break
-                print(f"[watcher] 未探测到跑 hermes 的 tmux 窗格（第 {attempt}/5 次），2s 后重试…")
-                time.sleep(2)
+                if attempt <= 5:
+                    print(f"[watcher] 未探测到跑 hermes 的 tmux 窗格（第 {attempt}/5 次快试），2s 后重试…")
+                    time.sleep(2)
+                else:
+                    if (attempt - 5) % 6 == 1:
+                        print(f"[watcher] 已等待 {attempt - 5} 个慢轮询周期（10s/次），继续等 hermes 出现在 tmux；"
+                              f"若走桌面端/网关续写可 Ctrl+C 停掉本进程")
+                    time.sleep(10)
         if not pane:
             panes = list_panes()
             print("[watcher] 未探测到跑 hermes 的 tmux 窗格。当前窗格：")
