@@ -588,8 +588,13 @@ let leaves = null, state = {};
 let planSel = {};
 let tags = [];
 let activePreset = null;   // 最近应用的方案名；选型一旦被手动改动即清除（UI 选中态依据）
+let activeProjectId = '';  // 当前 active 项目 id（切换项目取消时回滚下拉框用）
 
-const PRESET_TAGS = ['伪娘','放尿','调教','NTR','露出','群交','纯爱','网调','失禁','寸止','强制高潮','束缚','野外','药物','初夜','仙侠','古风','逆后宫','拘束','口交','肛交','羞耻','记录','远程','主从','堕落','虐恋','和风','花街','暗黑','灵异','校园'];
+// 标签清单唯一事实源在 leaves.json 的 tags 数组。曾硬编码在此处，与
+// conditions.category 双源漂移，四条标签约束全部失效（G5，裁决①方案A）
+function presetTags() {
+  return (leaves && Array.isArray(leaves.tags)) ? leaves.tags : [];
+}
 
 async function api(path, method='GET', body=null) {
   const opt = { method, headers: {} };
@@ -634,6 +639,7 @@ function injectProjectPicker() {
 
 async function loadProjects() {
   const p = await api('/api/projects');
+  activeProjectId = p.active || '';
   document.querySelectorAll('.proj-sel').forEach(s => {
     s.innerHTML = p.items.map(it =>
       `<option value="${escapeHtml(it.id)}"${it.id === p.active ? ' selected' : ''}>${escapeHtml(it.name)}</option>`
@@ -643,11 +649,19 @@ async function loadProjects() {
 }
 
 async function switchProject(id) {
-  if (!id) return;
+  // G3：确认必须先于切换——曾先切服务端后弹确认，用户取消时 active 已变、
+  // 页面仍显示旧项目，下次保存会写进新项目（串写丢稿）
+  if (!id || id === activeProjectId) return;
+  if (dirty && currentView === 'editor' &&
+      !confirm('编辑区有未保存的修改，切换项目将丢失。确定切换？')) {
+    document.querySelectorAll('.proj-sel').forEach(s => { s.value = activeProjectId; });
+    return;
+  }
   await api('/api/project/switch', 'POST', { id });
   await loadProjects();
   // 切项目后重置编辑态，回主页（避免旧项目数据残留显示）
   state = {}; draft = ''; planSel = {}; tags = [];
+  dirty = false;   // 用户已确认放弃未保存内容，别让 gotoView 再弹一次确认
   gotoView('home');
 }
 
@@ -656,11 +670,15 @@ function closeProjModal() { $('#projModal').classList.remove('show'); }
 async function confirmNewProject() {
   const name = $('#projName').value.trim();
   if (!name) { $('#projName').focus(); return; }
+  // G3 同款：确认先于请求，取消时服务端 active 不变
+  if (dirty && currentView === 'editor' &&
+      !confirm('编辑区有未保存的修改，新建项目将切换走并丢失。确定？')) return;
   await api('/api/projects', 'POST', { name });
   await loadProjects();
   closeProjModal();
   // 新建后清空编辑态，从主页开始新文章的规划
   state = {}; draft = ''; planSel = {}; tags = [];
+  dirty = false;
   gotoView('home');
 }
 
@@ -700,8 +718,8 @@ async function loadOutline() {
 
 // ---------- 标签 ----------
 function renderTags() {
-  // 自定义标签也要渲染（曾只渲染 PRESET_TAGS：自定义标签加了看不见、删不掉）
-  const all = PRESET_TAGS.slice();
+  // 自定义标签也要渲染（曾只渲染预置标签：自定义标签加了看不见、删不掉）
+  const all = presetTags().slice();
   tags.forEach(t => { if (!all.includes(t)) all.push(t); });
   $('#tagList').innerHTML = all.map(t =>
     `<span class="tag${tags.includes(t) ? ' on' : ''}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`
@@ -718,7 +736,7 @@ function toggleTag(t) {
 function addTag() {
   const v = $('#tagInput').value.trim();
   if (!v) return;
-  if (!PRESET_TAGS.includes(v) && !tags.includes(v)) tags.push(v);
+  if (!presetTags().includes(v) && !tags.includes(v)) tags.push(v);
   $('#tagInput').value = '';
   activePreset = null;
   renderPresets();
@@ -843,7 +861,8 @@ function checkConflicts() {
     if (va >= 4 && vb <= 2) banners.push(`协同：${a}(${va}) 高但 ${b}(${vb}) 低——建议同步拉高`);
     if (vb >= 4 && va <= 2) banners.push(`协同：${b}(${vb}) 高但 ${a}(${va}) 低——建议同步拉高`);
   }
-  // 标签条件约束（tag 匹配类别名）
+  // 标签条件约束（category 已归一为标签单词，清单在 leaves.json.tags；曾因
+  // 类目名带「/别名」后缀与标签体系错位，四条约束全部失效——G5）
   for (const c of (leaves.rules.conditions || [])) {
     if (!tags.includes(c.category)) continue;
     for (const r of c.rules) {
@@ -969,6 +988,11 @@ function parseSegments(text) {
     const end = i + 1 < marks.length ? marks[i + 1] : text.length;
     return { start: s, end: end, from: i + 1, to: i + 1, content: text.slice(s, end) };
   });
+  // 首个标记之前的前缀也是正文（AI 写回可能先输出标题/序言）：收为「卷首段」。
+  // 曾不属于任何段，保存重组时被静默丢弃——G1 实测丢稿路径
+  if (marks[0] > 0) {
+    segs.unshift({ start: 0, end: marks[0], from: 0, to: 0, content: text.slice(0, marks[0]) });
+  }
   return segs;
 }
 function mergeOldest(segs) {
@@ -978,13 +1002,15 @@ function mergeOldest(segs) {
   while (segs.length > 9) {
     const a = segs[0], b = segs[1];
     const bodyB = b.content.replace(/^\s*<!--\s*\[SCENE:[^\]]+\]\s*-->\s*\n?/, '');
+    const from = a.from === 0 ? 1 : a.from;   // 卷首段并入后按正文段计号
     const merged = a.content.replace(/\s*$/, '\n') +
-      `<!-- [SCENE:第${a.from}-${b.to}段] -->\n` + bodyB;
-    segs = [{ start: a.start, end: b.end, from: a.from, to: b.to, content: merged }, ...segs.slice(2)];
+      `<!-- [SCENE:第${from}-${b.to}段] -->\n` + bodyB;
+    segs = [{ start: a.start, end: b.end, from: from, to: b.to, content: merged }, ...segs.slice(2)];
   }
   return segs;
 }
 function segLabel(s) {
+  if (s.from === 0) return '卷首';   // 首标记前的前缀段（G1）
   return s.from === s.to ? '第' + s.from + '段' : '第' + s.from + '-' + s.to + '段';
 }
 function renderTabs() {
@@ -1198,6 +1224,15 @@ async function saveAll() {
     // 当前编辑内容存回活动段，然后合并各段为全文保存
     if (activeTab < segs.length) segs[activeTab].content = $('#editor').value;
     const text = segs.map(s => s.content).join('');
+    // 长度守恒断言（G1 回归防线）：段落重组必须无损覆盖全文，否则说明
+    // parseSegments 有洞（曾静默丢弃首标记前的文本）——阻止保存而不是丢字
+    const rejoined = parseSegments(text).map(s => s.content).join('');
+    if (rejoined !== text) {
+      console.error('[save] 段落重组与全文不一致，已阻止保存',
+                    { len: text.length, rejoined: rejoined.length });
+      $('#statusText').textContent = '保存已阻止：段落切分异常（详见控制台）';
+      return;
+    }
     const res = await api('/api/save', 'POST', { draft: text, expected_rev: draftRev });
     if (res && res.error === 'stale') {
       showStaleBar(res.rev);

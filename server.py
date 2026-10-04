@@ -320,16 +320,23 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _read_body(self):
-        length = int(self.headers.get("Content-Length", 0) or 0)
+        """读 JSON body：dict 正常返回；没有 body 返回 {}；坏 body 返回 None。
+        None 必须按 400 拒绝——坏 body 曾被吞成 {}，配合保存端点 draft 缺省空串，
+        一个空请求就能把整篇草稿清空（G2）。"""
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            return None
         if length <= 0:
             return {}
         raw = self.rfile.read(length)
         try:
-            return json.loads(raw.decode("utf-8"))
+            data = json.loads(raw.decode("utf-8"))
         except Exception:
-            # 非 UTF-8 / 非 JSON 的 body 一律按空 body 处理。
-            # decode 曾放在 try 外：坏请求体抛 UnicodeDecodeError 直接打断连接
-            return {}
+            # 非 UTF-8 / 非 JSON：decode 曾在 try 外直接打断连接；后来吞成 {}，
+            # 但那会让保存端点拿到空 dict 静默清稿——改成 None 让端点显式拒绝
+            return None
+        return data if isinstance(data, dict) else None
 
     def _host_allowed(self):
         """只服务本机名。防 DNS rebinding：恶意页面把域名指到 127.0.0.1 时 Host 还是它自己。"""
@@ -404,6 +411,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = unquote(urlparse(self.path).path)
         body = self._read_body()
+        if body is None:
+            # 坏 body（非 JSON/非 dict）一律 400，绝不带 {} 进后续端点
+            self._send(400, {"error": "invalid request body"})
+            return
         pid = active_id()
         if path == "/api/projects":
             # 新建项目 {name} → 设为 active，返回完整索引（索引读-改-写上锁防并发丢项目）
@@ -434,7 +445,8 @@ class Handler(BaseHTTPRequestHandler):
             if not pid:
                 self._send(400, {"error": "no active project"})
                 return
-            text = body.get("draft", "")
+            # draft 键缺失（None）同样拒绝：曾默认 ""，空 body 请求直接清空整稿（G2）
+            text = body.get("draft")
             if not isinstance(text, str):
                 self._send(400, {"error": "draft must be string"})
                 return
@@ -449,7 +461,8 @@ class Handler(BaseHTTPRequestHandler):
             if not pid:
                 self._send(400, {"error": "no active project"})
                 return
-            text = body.get("draft", "")
+            # draft 键缺失（None）同样拒绝，语义同 /api/save（G2）
+            text = body.get("draft")
             if not isinstance(text, str):
                 self._send(400, {"error": "draft must be string"})
                 return
@@ -505,31 +518,35 @@ class Handler(BaseHTTPRequestHandler):
             save_json(CONTINUE_ACK, ack)
             self._send(200, {"ok": True})
         elif path == "/api/presets":
-            # 保存 {name, desc, tags[], leaves{}} 覆盖同名；或 {delete: name} 删除
-            custom = load_json(CUSTOM_PRESETS, [])
-            if body.get("delete"):
-                custom = [p for p in custom if p.get("name") != body["delete"]]
-            else:
-                name = str(body.get("name", "")).strip()
-                if not name:
-                    self._send(400, {"error": "name required"})
-                    return
-                entry = {"name": name, "desc": str(body.get("desc", "")),
-                         "tags": body.get("tags", []) or [],
-                         "leaves": body.get("leaves", {}) or {}}
-                custom = [p for p in custom if p.get("name") != name] + [entry]
-            save_json(CUSTOM_PRESETS, custom)
+            # 保存 {name, desc, tags[], leaves{}} 覆盖同名；或 {delete: name} 删除。
+            # 读-改-写与保存同锁（G4）：并发 POST 曾各自读到同一列表再整体覆写，丢方案
+            with SAVE_LOCK:
+                custom = load_json(CUSTOM_PRESETS, [])
+                if body.get("delete"):
+                    custom = [p for p in custom if p.get("name") != body["delete"]]
+                else:
+                    name = str(body.get("name", "")).strip()
+                    if not name:
+                        self._send(400, {"error": "name required"})
+                        return
+                    entry = {"name": name, "desc": str(body.get("desc", "")),
+                             "tags": body.get("tags", []) or [],
+                             "leaves": body.get("leaves", {}) or {}}
+                    custom = [p for p in custom if p.get("name") != name] + [entry]
+                save_json(CUSTOM_PRESETS, custom)
             self._send(200, {"custom": custom})
         elif path == "/api/changes":
             if not pid:
                 self._send(400, {"error": "no active project"})
                 return
-            changes = load_json(fpath(pid, "changes.json"), [])
-            changes.append(body.get("change", {}))
-            # 追加式限容：只留最近 CHANGES_KEEP 条，语义变化记录不会无限膨胀
-            if len(changes) > CHANGES_KEEP:
-                changes = changes[-CHANGES_KEEP:]
-            save_json(fpath(pid, "changes.json"), changes)
+            # 读-改-写与保存同锁（G4）：并发 POST 曾互相覆盖丢记录，与 diffs 同类洞
+            with SAVE_LOCK:
+                changes = load_json(fpath(pid, "changes.json"), [])
+                changes.append(body.get("change", {}))
+                # 追加式限容：只留最近 CHANGES_KEEP 条，语义变化记录不会无限膨胀
+                if len(changes) > CHANGES_KEEP:
+                    changes = changes[-CHANGES_KEEP:]
+                save_json(fpath(pid, "changes.json"), changes)
             self._send(200, {"ok": True})
         else:
             self._send(404, {"error": "not found"})

@@ -7,13 +7,16 @@
 
 多 AI 协作的回归防线：改完 server.py / continue_watcher.py 必须全绿再提交。
 覆盖：保存链路（round/rev 推进、空保存短路、并发、备份轮转）、rev 乐观锁 409、
-/api/ai-write（source=ai）、Host/Origin 校验、坏请求体容错、save_json 并发、
-信号原子消费与 TTL、changes 限容。
+/api/ai-write（source=ai）、Host/Origin 校验、坏请求体拒绝（G2）、save_json 并发、
+信号原子消费与 TTL、changes 限容、changes/presets 并发全落账（G4）、
+leaves.json 引用完整性（G5）、缺 draft 键拒绝（G2）。
 """
+import atexit
 import http.client
 import importlib.util
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -23,13 +26,23 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
+_SANDBOXES = []
+
+def _mkdtemp(*a, **k):
+    """mkdtemp + 登记退出清理（曾每次跑测试漏几个临时目录在系统 temp 里）。"""
+    d = tempfile.mkdtemp(*a, **k)
+    _SANDBOXES.append(d)
+    return d
+
+atexit.register(lambda: [shutil.rmtree(d, ignore_errors=True) for d in _SANDBOXES])
+
 
 def _load_server():
     """把 server.py 当模块加载，并把它的数据目录重定向到一次性沙箱。"""
     spec = importlib.util.spec_from_file_location("cw_server", os.path.join(ROOT, "server.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)   # 副作用仅 makedirs(BASE/data)；随后立即改写全部路径
-    sandbox = tempfile.mkdtemp(prefix="cw-selftest-")
+    sandbox = _mkdtemp(prefix="cw-selftest-")
     mod.DATA = sandbox
     mod.PROJECTS = os.path.join(sandbox, "projects.json")
     mod.CUSTOM_PRESETS = os.path.join(sandbox, "custom_presets.json")
@@ -229,6 +242,88 @@ class Security(Base):
         self.assertIn(st, (200, 400))
 
 
+class StopBleed(Base):
+    """批次 S 止血回归（升级计划四 §4.1）：堵死全部已知主动丢稿路径。"""
+
+    def test_save_missing_draft_key_rejected(self):
+        """G2：缺 draft 键曾默认空串——一个不带 body 的请求就能清空整篇草稿"""
+        self.req("POST", "/api/save", {"draft": "正文不能丢\n"})
+        _, before = self.req("GET", "/api/draft")
+        _, diffs_before = self.req("GET", "/api/diffs")
+        st, r = self.req("POST", "/api/save", {"expected_rev": before["rev"]})
+        self.assertEqual(st, 400)
+        st, _ = self.req("POST", "/api/save", {})
+        self.assertEqual(st, 400)
+        _, after = self.req("GET", "/api/draft")
+        _, diffs_after = self.req("GET", "/api/diffs")
+        self.assertEqual(after["draft"], before["draft"], "缺 draft 键不得清空草稿")
+        self.assertEqual(after["rev"], before["rev"], "被拒的保存不得推进 rev")
+        self.assertEqual(len(diffs_after), len(diffs_before), "被拒的保存不得新增 diff")
+
+    def test_save_bad_body_rejected(self):
+        """G2：坏 body 曾被吞成 {}，配合 draft 缺省空串会清稿；现在必须 400"""
+        self.req("POST", "/api/save", {"draft": "正文不能丢\n"})
+        st, _ = self.raw("POST", "/api/save", b"\xff\xfe not json",
+                         {"Content-Type": "application/json"})
+        self.assertEqual(st, 400)
+        st, _ = self.req("POST", "/api/ai-write", {"expected_rev": 0})
+        self.assertEqual(st, 400)
+        # 稿件须完好
+        _, d = self.req("GET", "/api/draft")
+        self.assertIn("正文不能丢", d["draft"])
+
+    def test_changes_and_presets_concurrent_all_recorded(self):
+        """G4：changes/presets 读-改-写曾无锁，并发 POST 互相覆盖丢记录"""
+        n = 8
+        errs = []
+
+        def w(i):
+            try:
+                st, r = self.req("POST", "/api/changes", {"change": {"what": "c%d" % i}})
+                assert st == 200 and r.get("ok"), (st, r)
+                st, r = self.req("POST", "/api/presets",
+                                 {"name": "p%d" % i, "desc": "", "tags": [], "leaves": {}})
+                assert st == 200, (st, r)
+            except Exception as e:
+                errs.append(e)
+
+        ts = [threading.Thread(target=w, args=(i,)) for i in range(n)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(errs, [])
+        _, ch = self.req("GET", "/api/changes")
+        whats = [c.get("what") for c in ch]
+        for i in range(n):
+            self.assertIn("c%d" % i, whats, "并发 changes 不许丢记录")
+        _, ps = self.req("GET", "/api/presets")
+        names = [p.get("name") for p in ps["custom"]]
+        for i in range(n):
+            self.assertIn("p%d" % i, names, "并发 presets 不许丢记录")
+
+    def test_leaves_json_references(self):
+        """G5：conditions.category 曾与标签体系错位，四条标签约束从未生效。
+        锁死三件事：category 必须是已注册标签、叶 id 不悬空、方案引用存在"""
+        _, data = self.req("GET", "/api/leaves")
+        tags = set(data.get("tags", []))
+        self.assertTrue(tags, "leaves.json 必须提供 tags 数组（裁决①方案A：标签清单唯一事实源）")
+        leaf_ids = []
+        for axis in data["axis"].values():
+            for leaf in axis["leaves"]:
+                leaf_ids.append(leaf["id"])
+        self.assertEqual(len(leaf_ids), len(set(leaf_ids)), "叶 id 必须全局唯一")
+        ids = set(leaf_ids)
+        for cond in data["rules"]["conditions"]:
+            self.assertIn(cond["category"], tags,
+                          "conditions.category 必须是标签单词（曾因类目名错位全部失效）")
+        for preset in data["presets"]:
+            for k in preset["leaves"]:
+                self.assertIn(k, ids, "方案引用的叶必须存在")
+            for t in preset.get("tags", []):
+                self.assertIn(t, tags, "方案的标签必须是已注册标签")
+
+
 class SignalChain(Base):
     def test_take_is_atomic(self):
         self.req("POST", "/api/signal/continue", {"text": "hello", "round": 1})
@@ -248,7 +343,7 @@ class SignalChain(Base):
 class SaveJsonConcurrency(unittest.TestCase):
     def test_same_path_concurrent_writes(self):
         """B1 回归：save_json 固定 .tmp 名时并发互抢会 PermissionError/FileNotFoundError"""
-        path = os.path.join(tempfile.mkdtemp(prefix="cw-sj-"), "x.json")
+        path = os.path.join(_mkdtemp(prefix="cw-sj-"), "x.json")
         errs = []
 
         def w(k):
@@ -269,7 +364,7 @@ class SaveJsonConcurrency(unittest.TestCase):
 
     def test_corrupt_json_quarantined(self):
         """损坏的 JSON 必须先隔离再回默认值——静默吞掉会让下次保存覆盖真实历史"""
-        d = tempfile.mkdtemp(prefix="cw-cj-")
+        d = _mkdtemp(prefix="cw-cj-")
         p = os.path.join(d, "x.json")
         with open(p, "w", encoding="utf-8") as f:
             f.write('{"broken"')
