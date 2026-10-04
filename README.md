@@ -81,7 +81,7 @@ data/
 
 | 文件 | 说明 |
 |---|---|
-| `index.html` | 单页前端：四个视图 + 三个弹窗同在一个 DOM，原生 JS |
+| `index.html` | 单页前端：四个视图 + 两个弹窗同在一个 DOM，原生 JS |
 | `server.py` | 后端：标准库 `http.server`，静态页 + JSON API |
 | `leaves.json` | 42 个叶子（评价指标）定义与联动规则 |
 | `continue_watcher.py` | 续写信号监视器：消费信号并注入 tmux 里的 Hermes（单实例锁） |
