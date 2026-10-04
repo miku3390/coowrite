@@ -66,7 +66,7 @@ data/
 | GET/POST | `/api/plan` | 叶子预算表 |
 | GET/POST | `/api/outline` | 规划表单 |
 | GET/POST | `/api/state` | 轮次 / 修订号 / 场景 / 标签 / 建议（round、rev 以服务端为准）|
-| GET/POST | `/api/links` | 连接点图 |
+| GET/POST | `/api/links` | 连接点图 v1：`{version, anchors, edges}`，POST 按 id 合并（AI 增量友好），删除走 `delete_ids`/`delete_edges`；前端侧栏有列表/SVG 图/编辑三视图 |
 | GET | `/api/diffs` | diff 历史（含 `source: user/ai`）|
 | POST | `/api/save` | 存稿 + 备份 + 生成 diff 记录，body `{draft, expected_rev?}`。内容与当前稿一致时短路返回 `{ok, unchanged:true}`；带 `expected_rev` 且稿件已被对方（AI/别的标签页）推进时返回 `409 {error:"stale", rev}`，冲突交给人裁决；有变化时返回 `{ok, diff_count, round, rev}`，**回合数与修订号由服务端 +1**（请求体里的 `round` 不再采信）；缺 `draft` 键或坏 body 一律 `400`（批次 S / G2 修复） |
 | POST | `/api/ai-write` | **AI 写回专用通道**，body `{draft, expected_rev?}`。与用户保存同一套备份轮转 + diff 记录（`source:"ai"`），杜绝直接改 `draft.md` 的无账覆盖 |

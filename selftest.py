@@ -9,7 +9,8 @@
 覆盖：保存链路（round/rev 推进、空保存短路、并发、备份轮转）、rev 乐观锁 409、
 /api/ai-write（source=ai）、Host/Origin 校验、坏请求体拒绝（G2）、save_json 并发、
 信号原子消费与 TTL、changes 限容、changes/presets 并发全落账（G4）、
-leaves.json 引用完整性（G5）、缺 draft 键拒绝（G2）。
+leaves.json 引用完整性（G5）、缺 draft 键拒绝（G2）、
+连接点图（links 校验/按 id 合并/并发增补/无正文副作用，计划五 ST-L）。
 """
 import atexit
 import http.client
@@ -322,6 +323,100 @@ class StopBleed(Base):
                 self.assertIn(k, ids, "方案引用的叶必须存在")
             for t in preset.get("tags", []):
                 self.assertIn(t, tags, "方案的标签必须是已注册标签")
+
+
+class LinksGraph(Base):
+    """计划五批次 L：连接点图数据层回归（校验 / 按 id 合并 / 并发 / action 字段）。"""
+
+    def test_links_delete_and_concurrent(self):
+        """显式删除 + 8 线程并发增补全落账（合并语义下删除必须显式声明）"""
+        errs = []
+
+        def w(i):
+            try:
+                st, r = self.req("POST", "/api/links", {"links": {
+                    "version": 1,
+                    "anchors": [{"id": "scene:s%d" % i, "kind": "scene", "label": "s%d" % i}],
+                    "edges": []}})
+                assert st == 200, (st, r)
+            except Exception as e:
+                errs.append(e)
+
+        ts = [threading.Thread(target=w, args=(i,)) for i in range(8)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(errs, [])
+        _, got = self.req("GET", "/api/links")
+        ids = {a["id"] for a in got["anchors"]}
+        self.assertEqual({("scene:s%d" % i) for i in range(8)} <= ids, True, "并发增补不许丢锚点")
+        # 显式删除锚点：本体与关联边一起移除
+        st, _ = self.req("POST", "/api/links", {"links": {
+            "version": 1, "anchors": [], "edges": [], "delete_ids": ["scene:s0"]}})
+        self.assertEqual(st, 200)
+        _, got = self.req("GET", "/api/links")
+        self.assertNotIn("scene:s0", {a["id"] for a in got["anchors"]})
+
+    def test_links_validation_and_merge(self):
+        """ST-L1：合法 v1 写入按 id 合并；坏结构一律 400（AI 疯写/脏数据进图）"""
+        good = {"version": 1,
+                "anchors": [{"id": "scene:结契", "kind": "scene", "label": "结契", "desc": "d"}],
+                "edges": [{"from": "scene:结契", "to": "char:浅井:耐受度", "rel": "影响"}]}
+        st, r = self.req("POST", "/api/links", {"links": good})
+        self.assertEqual(st, 200)
+        self.assertTrue(r["ok"])
+        _, got = self.req("GET", "/api/links")
+        self.assertIn("scene:结契", {a["id"] for a in got["anchors"]})
+        self.assertIn(("scene:结契", "char:浅井:耐受度", "影响"),
+                      {(e["from"], e["to"], e["rel"]) for e in got["edges"]})
+        # 增量合并：只发新锚点，旧的保留（AI 逐回合增补的契约）
+        inc = {"version": 1,
+               "anchors": [{"id": "char:浅井:耐受度", "kind": "trait", "label": "浅井·耐受度"}],
+               "edges": []}
+        st, _ = self.req("POST", "/api/links", {"links": inc})
+        self.assertEqual(st, 200)
+        _, got = self.req("GET", "/api/links")
+        ids = {a["id"] for a in got["anchors"]}
+        self.assertIn("scene:结契", ids)
+        self.assertIn("char:浅井:耐受度", ids)
+        # 坏结构 400：坏版本 / 缺 label / 坏 kind / 坏 edge / 非对象
+        for bad in ({"version": 2, "anchors": []},
+                    {"version": 1, "anchors": [{"id": "x", "kind": "scene"}]},
+                    {"version": 1, "anchors": [{"id": "x", "kind": "nope", "label": "x"}]},
+                    {"version": 1, "anchors": [], "edges": [{"from": "a"}]},
+                    {"version": 1, "anchors": [], "edges": [{"from": "a", "to": "b"}]},
+                    "not-a-dict"):
+            st, _ = self.req("POST", "/api/links", {"links": bad})
+            self.assertEqual(st, 400, repr(bad))
+            _, got2 = self.req("GET", "/api/links")
+            self.assertIn("scene:结契", {a["id"] for a in got2["anchors"]}, "被拒的写入不得破坏已有图")
+
+    def test_links_write_no_side_effects(self):
+        """ST-L4：图不是正文——links 写入不推进 rev、不产生 diff、不轮转备份"""
+        self.req("POST", "/api/save", {"draft": "正文\n"})
+        _, before = self.req("GET", "/api/draft")
+        _, diffs_before = self.req("GET", "/api/diffs")
+        st, _ = self.req("POST", "/api/links", {"links": {
+            "version": 1,
+            "anchors": [{"id": "scene:x", "kind": "scene", "label": "x"}], "edges": []}})
+        self.assertEqual(st, 200)
+        _, after = self.req("GET", "/api/draft")
+        _, diffs_after = self.req("GET", "/api/diffs")
+        self.assertEqual(after["rev"], before["rev"])
+        self.assertEqual(len(diffs_after), len(diffs_before))
+        with open(self.proj_file("draft.md"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "正文\n")
+
+    def test_signal_action_field(self):
+        """ST-L3：信号 action 字段——graph 生成信号透传，缺省为 continue"""
+        self.req("POST", "/api/signal/continue", {"text": "gen", "round": 1, "action": "graph"})
+        _, r = self.req("POST", "/api/signal/continue/take", {})
+        self.assertEqual(r.get("action"), "graph")
+        self.assertEqual(r.get("text"), "gen")
+        self.req("POST", "/api/signal/continue", {"text": "cont", "round": 2})
+        _, r = self.req("POST", "/api/signal/continue/take", {})
+        self.assertEqual(r.get("action"), "continue", "不带 action 默认 continue")
 
 
 class SignalChain(Base):

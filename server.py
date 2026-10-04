@@ -42,6 +42,74 @@ HERMES_ACTIVE_WINDOW = 300.0   # 秒：最后消息距今 < 该值且非 stop �
 PROJ_FILES = ["draft.md", "draft_backup.md", "diffs.json", "plan.json",
               "links.json", "state.json", "outline.json", "changes.json"]
 
+# ---------- 连接点图（links.json v1，计划五） ----------
+LINK_KINDS = ("scene", "trait", "item", "custom")
+LINKS_MAX_BYTES = 512 * 1024
+
+def _validate_links(links):
+    """合法返回 None，否则返回错误说明。只校验结构，不要求边端点已存在——
+    AI 常先写边后补点，前端把缺失端点画成幽灵节点。"""
+    if not isinstance(links, dict):
+        return "links must be object"
+    if links.get("version") != 1:
+        return "version must be 1"
+    anchors = links.get("anchors")
+    if not isinstance(anchors, list) or len(anchors) > 500:
+        return "anchors must be a list (<=500)"
+    seen = set()
+    for a in anchors:
+        if not isinstance(a, dict) or not isinstance(a.get("id"), str) or not a.get("id"):
+            return "anchor.id must be non-empty string"
+        if a.get("kind") not in LINK_KINDS:
+            return "anchor.kind must be one of %s" % (LINK_KINDS,)
+        if not isinstance(a.get("label"), str) or not a.get("label"):
+            return "anchor.label must be non-empty string"
+        if len(a["id"]) > 120 or len(a["label"]) > 200 or len(str(a.get("desc", ""))) > 1000:
+            return "anchor id/label/desc too long"
+        if a["id"] in seen:
+            return "duplicate anchor id: %s" % a["id"]
+        seen.add(a["id"])
+    edges = links.get("edges", [])
+    if not isinstance(edges, list) or len(edges) > 2000:
+        return "edges must be a list (<=2000)"
+    for e in edges:
+        if not isinstance(e, dict):
+            return "edge must be object"
+        for k in ("from", "to"):
+            v = e.get(k)
+            if not isinstance(v, str) or not v or len(v) > 120:
+                return "edge.%s must be non-empty string (<=120)" % k
+        if not isinstance(e.get("rel"), str) or not e.get("rel") or len(e["rel"]) > 40:
+            return "edge.rel must be non-empty string (<=40)"
+    for key in ("delete_ids", "delete_edges"):
+        if key in links and not isinstance(links[key], list):
+            return "%s must be a list" % key
+    try:
+        if len(json.dumps(links, ensure_ascii=False)) > LINKS_MAX_BYTES:
+            return "links too large (>512KB)"
+    except (TypeError, ValueError):
+        return "links not serializable"
+    return None
+
+def _merge_links(existing, incoming):
+    """按 id 合并（计划五 §三）：AI 逐回合只发新条目即可，与用户编辑并发不互相
+    覆盖；删除必须显式声明（delete_ids / delete_edges），防止旧快照整体覆盖
+    丢掉并发增补。删除锚点时其关联边一并移除。"""
+    anchors = {a["id"]: a for a in existing.get("anchors", [])}
+    for a in incoming.get("anchors", []):
+        anchors[a["id"]] = a
+    edges = {(e.get("from"), e.get("to"), e.get("rel", "")): e
+             for e in existing.get("edges", [])}
+    for e in incoming.get("edges", []):
+        edges[(e["from"], e["to"], e.get("rel", ""))] = e
+    for did in incoming.get("delete_ids", []) or []:
+        anchors.pop(did, None)
+        edges = {k: v for k, v in edges.items() if k[0] != did and k[1] != did}
+    for de in incoming.get("delete_edges", []) or []:
+        edges.pop((de.get("from"), de.get("to"), de.get("rel", "")), None)
+    return {"version": 1, "anchors": list(anchors.values()), "edges": list(edges.values())}
+
+
 def load_json(path, default):
     try:
         with open(path, encoding="utf-8") as f:
@@ -302,7 +370,8 @@ def take_continue_signal():
         return {"text": None}
     if time.time() - sig.get("ts", 0) > SIGNAL_TTL:
         return {"text": None, "expired": True}
-    return {"text": sig["text"], "round": sig.get("round", 0),
+    return {"text": sig["text"], "action": sig.get("action", "continue"),
+            "round": sig.get("round", 0),
             "t": sig.get("t"), "ts": sig.get("ts", 0), "project": sig.get("project", "")}
 
 class Handler(BaseHTTPRequestHandler):
@@ -383,7 +452,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/plan":
             self._send(200, json.dumps(load_json(fpath(pid, "plan.json"), {}) if pid else {}, ensure_ascii=False))
         elif path == "/api/links":
-            self._send(200, json.dumps(load_json(fpath(pid, "links.json"), {"anchors": []}) if pid else {"anchors": []}, ensure_ascii=False))
+            self._send(200, json.dumps(
+                load_json(fpath(pid, "links.json"),
+                          {"version": 1, "anchors": [], "edges": []}) if pid
+                else {"version": 1, "anchors": [], "edges": []},
+                ensure_ascii=False))
         elif path == "/api/state":
             self._send(200, json.dumps(load_json(fpath(pid, "state.json"), {"round": 0, "scene": ""}) if pid else {"round": 0, "scene": ""}, ensure_ascii=False))
         elif path == "/api/diffs":
@@ -479,8 +552,21 @@ class Handler(BaseHTTPRequestHandler):
             if not pid:
                 self._send(400, {"error": "no active project"})
                 return
-            save_json(fpath(pid, "links.json"), body.get("links", {"anchors": []}))
-            self._send(200, {"ok": True})
+            links = body.get("links")
+            err = _validate_links(links)
+            if err:
+                self._send(400, {"error": "invalid links", "detail": err})
+                return
+            # 按 id 合并 + SAVE_LOCK：AI 逐回合增补与用户编辑并发不互相覆盖（G4 同款洞）
+            with SAVE_LOCK:
+                merged = _merge_links(
+                    load_json(fpath(pid, "links.json"),
+                              {"version": 1, "anchors": [], "edges": []}),
+                    links)
+                save_json(fpath(pid, "links.json"), merged)
+            self._send(200, {"ok": True,
+                             "anchors": len(merged["anchors"]),
+                             "edges": len(merged["edges"])})
         elif path == "/api/state":
             if not pid:
                 self._send(400, {"error": "no active project"})
@@ -503,8 +589,11 @@ class Handler(BaseHTTPRequestHandler):
             save_json(fpath(pid, "outline.json"), body.get("outline", {}))
             self._send(200, {"ok": True})
         elif path == "/api/signal/continue":
-            # 网页「保存并继续」→ 写一条续写信号，供 continue_watcher.py 消费注入 Hermes
-            sig = {"text": str(body.get("text", "")), "round": body.get("round", 0),
+            # 网页「保存并继续」→ 写一条续写信号，供 continue_watcher.py 消费注入 Hermes。
+            # action 区分意图（continue 续写 / graph 生成连接点图，计划五）；watcher 不解析只透传
+            sig = {"text": str(body.get("text", "")),
+                   "action": str(body.get("action") or "continue"),
+                   "round": body.get("round", 0),
                    "t": time.strftime("%H:%M:%S"), "ts": time.time(), "project": pid or ""}
             save_json(CONTINUE_SIGNAL, sig)
             self._send(200, {"ok": True})

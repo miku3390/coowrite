@@ -351,6 +351,57 @@
   .hs-meta { font-size: 11px; color: var(--sub); line-height: 1.6; }
   .hs-preview { font-size: 11px; color: var(--ink); line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 72px; overflow-y: auto; margin-top: 4px; }
 
+  /* ---------- 可折叠侧栏卡（AI 建议 / 连接点 / 时间线，计划五） ---------- */
+  .sc-head { cursor: pointer; user-select: none; display: flex; align-items: center; }
+  .sc-head .sc-arrow { margin-left: auto; font-size: 11px; color: var(--sub); }
+  .sc-body { margin-top: 8px; font-size: 12px; line-height: 1.7; }
+  .muted { color: var(--sub); }
+  .lk-empty { font-size: 11.5px; color: var(--sub); line-height: 1.7; }
+  /* 建议区：按【已写需改】/【未写按新设定写】分节着色 */
+  .advice-sec { white-space: pre-wrap; word-break: break-word; padding: 6px 8px; border-radius: 8px; margin-bottom: 6px; max-height: 240px; overflow-y: auto; }
+  .advice-sec.advice-fix { background: rgba(200,50,80,.07); }
+  .advice-sec.advice-new { background: rgba(42,111,151,.07); }
+  /* 时间线 */
+  .tl-round { margin-bottom: 8px; }
+  .tl-round summary { cursor: pointer; font-size: 11.5px; font-weight: 600; color: var(--sub); }
+  .tl-item { padding: 6px 0 4px; border-bottom: 1px dashed var(--line); }
+  .tl-what { white-space: pre-wrap; word-break: break-word; }
+  .tl-badge { display: inline-block; font-size: 10.5px; padding: 1px 8px; margin: 3px 4px 0 0; border-radius: 980px; background: var(--accent-soft); color: var(--accent); cursor: pointer; }
+  .tl-badge.muted { background: rgba(0,0,0,.06); color: var(--sub); cursor: default; }
+  .tl-badge:hover { filter: brightness(.95); }
+  /* 连接点卡 */
+  .lk-toolbar { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .lk-view-switch { display: flex; gap: 2px; margin-bottom: 8px; }
+  .lk-vs { font-size: 11.5px; padding: 3px 12px; border-radius: 8px; cursor: pointer; color: var(--sub); background: rgba(0,0,0,.05); }
+  .lk-vs.on { background: var(--panel-solid); color: var(--ink); font-weight: 600; border: 1px solid var(--line); }
+  .lk-list { max-height: 320px; overflow-y: auto; }
+  .lk-group { margin-bottom: 8px; }
+  .lk-group-name { font-size: 11px; font-weight: 700; color: var(--sub); margin-bottom: 3px; }
+  .lk-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+  .lk-item:hover { background: rgba(0,0,0,.05); }
+  .lk-item.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .lk-item-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lk-deg { font-size: 10px; color: var(--sub); background: rgba(0,0,0,.05); border-radius: 8px; padding: 0 6px; flex: none; }
+  .lk-edge { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--sub); padding: 2px 8px; }
+  .lk-edge em { font-style: normal; color: var(--accent); }
+  .lk-edge span:first-child { flex: 1; }
+  .lk-x { color: var(--sub); cursor: pointer; padding: 0 5px; border-radius: 4px; flex: none; }
+  .lk-x:hover { background: rgba(200,50,80,.12); color: var(--accent); }
+  .lk-graph svg { background: rgba(0,0,0,.02); border-radius: 10px; display: block; }
+  .lk-node { cursor: pointer; }
+  .lk-node rect { fill: var(--panel-solid); stroke: var(--line); stroke-width: 1; }
+  .lk-node:hover rect { stroke: var(--accent); }
+  .lk-node.ghost rect { stroke-dasharray: 4 3; fill: rgba(0,0,0,.03); }
+  .lk-node.on rect { stroke: var(--accent); stroke-width: 1.6; fill: var(--accent-soft); }
+  .lk-node text { font-size: 11px; fill: var(--ink); pointer-events: none; }
+  .lk-edge-line { fill: none; stroke: rgba(0,0,0,.18); stroke-width: 1.2; marker-end: url(#lkArrow); }
+  .lk-edge-line.on { stroke: var(--accent); stroke-width: 1.8; }
+  .lk-form { border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .lk-form-title { font-size: 11px; font-weight: 700; color: var(--sub); }
+  .lk-row { display: flex; gap: 6px; }
+  .lk-row select, .lk-form input { flex: 1; min-width: 0; font-size: 12px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; font-family: inherit; outline: none; background: var(--panel-solid); color: var(--ink); }
+  .lk-msg { font-size: 11px; color: var(--accent); min-height: 14px; }
+
   /* ---------- 弹窗 ---------- */
   .modal-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,.4);
@@ -530,9 +581,48 @@
         <div class="hs-meta" id="hsMeta"></div>
         <div class="hs-preview" id="hsPreview"></div>
       </div>
+      <div class="card" id="card-advice">
+        <h3 class="sc-head" onclick="toggleCard('advice')">AI 建议 <span class="sc-arrow">▸</span></h3>
+        <div class="sc-body" id="card-advice-body" style="display:none"><div id="adviceBody"><div class="lk-empty">进入写作后这里显示 AI 的建议与连锁修改提示</div></div></div>
+      </div>
       <div class="card">
         <h3>最近改动</h3>
         <div id="diffPanel" class="diff-panel"><span class="diff-empty">保存后这里显示改动</span></div>
+      </div>
+      <div class="card" id="card-links">
+        <h3 class="sc-head" onclick="toggleCard('links')">连接点图 <span class="sc-arrow">▸</span></h3>
+        <div class="sc-body" id="card-links-body" style="display:none">
+          <div class="lk-toolbar">
+            <button class="btn small" id="genGraphBtn" onclick="sendGraphSignal()">⚙ 生成连接点图</button>
+            <button class="btn small ghost" onclick="loadLinks()">刷新</button>
+            <button class="btn small ghost" id="lkEditBtn" onclick="toggleLinksEdit()">编辑</button>
+          </div>
+          <div class="lk-view-switch">
+            <span class="lk-vs on" data-view="list" onclick="switchLinksView('list')">列表</span>
+            <span class="lk-vs" data-view="graph" onclick="switchLinksView('graph')">图</span>
+          </div>
+          <div id="linksList" class="lk-list"></div>
+          <div id="linksGraph" class="lk-graph" style="display:none"></div>
+          <div id="lkEditPanel" class="lk-form" style="display:none">
+            <div class="lk-form-title">加锚点</div>
+            <div class="lk-row">
+              <select id="lkKind"><option value="scene">场景</option><option value="trait">角色属性</option><option value="item">道具·伏笔</option><option value="custom">其他</option></select>
+              <input id="lkLabel" placeholder="名称（角色属性用「角色-属性」）">
+            </div>
+            <input id="lkDesc" placeholder="一句话说明（可选）">
+            <button class="btn small" onclick="addAnchor()">添加锚点</button>
+            <div class="lk-form-title">加关系</div>
+            <div class="lk-row"><select id="lkFrom"></select><select id="lkTo"></select></div>
+            <input id="lkRel" placeholder="关系：影响 / 伏笔 / 因果…">
+            <button class="btn small" onclick="addEdge()">添加关系</button>
+            <button class="btn small ghost" onclick="saveLinksEdit()">保存图到服务端</button>
+            <div class="lk-msg" id="lkMsg"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card" id="card-timeline">
+        <h3 class="sc-head" onclick="toggleCard('timeline')">语义变化时间线 <span class="sc-arrow">▸</span></h3>
+        <div class="sc-body" id="card-timeline-body" style="display:none"><div id="timelineBody"></div></div>
       </div>
       <div class="card">
         <h3>导出</h3>
@@ -660,7 +750,7 @@ async function switchProject(id) {
   await api('/api/project/switch', 'POST', { id });
   await loadProjects();
   // 切项目后重置编辑态，回主页（避免旧项目数据残留显示）
-  state = {}; draft = ''; planSel = {}; tags = [];
+  state = {}; draft = ''; planSel = {}; tags = []; linksData = null; changesData = []; selectedAnchor = null;
   dirty = false;   // 用户已确认放弃未保存内容，别让 gotoView 再弹一次确认
   gotoView('home');
 }
@@ -677,7 +767,7 @@ async function confirmNewProject() {
   await loadProjects();
   closeProjModal();
   // 新建后清空编辑态，从主页开始新文章的规划
-  state = {}; draft = ''; planSel = {}; tags = [];
+  state = {}; draft = ''; planSel = {}; tags = []; linksData = null; changesData = []; selectedAnchor = null;
   dirty = false;
   gotoView('home');
 }
@@ -1194,6 +1284,10 @@ async function initEditor() {
   $('#sceneName').textContent = state.scene ? '' : '（等待第一段）';
   updateWordCount();
   renderDiffs();
+  // 计划五三卡：建议区随 state 即时渲染，连接点与时间线异步拉取
+  renderAdvice();
+  loadTimeline();
+  loadLinks();
   dirty = false;
   markSaved();
   hideStaleBar();
@@ -1252,7 +1346,12 @@ async function saveAll() {
     renderDiffs();
     markSaved();
     hideStaleBar();
-    const contText = `继续协同写作：第 ${state.round || 0} 回合「${state.scene || '（未命名）'}」。请读取最新稿子（draft.md）续写下一段；写回请走 POST /api/ai-write（带 expected_rev），不要直接改 draft.md，写回后告诉我。`;
+    // 指令协议 v2（计划五 §4.1）：查图 → 增补锚点 → 语义变化挂锚点 → 连锁建议进 advice
+    const contText = `继续协同写作：第 ${state.round || 0} 回合「${state.scene || '（未命名）'}」。请按协议执行：
+1) 读 draft.md 续写下一段，写回走 POST /api/ai-write（带 expected_rev），不要直接改 draft.md，写回后告诉我。
+2) 写回成功后 GET /api/links 查连接点图；本段引入的新场景/新角色属性/新伏笔，用 POST /api/links 增补，只发新条目：{"links":{"version":1,"anchors":[{"id":"scene:名","kind":"scene","label":"名"}],"edges":[{"from":"...","to":"...","rel":"影响"}]}}，服务端按 id 合并。
+3) POST /api/changes 归纳本段语义变化：{"change":{"what":"什么故事事实变了","affects":["scene:名","角色:角色-属性"]}}。
+4) 若本段改动牵连图上已写场景：把连锁修改建议写进 state.advice，分「已写需改」「未写按新设定写」两组小节；更新 advice 用 GET /api/state → 只改 advice 字段 → POST 回全量（别丢 tags/scene）。`;
     if (window.workbenchBridge?.continue) {
       // Electron 桌面端：走宿主桥（3939 信令）。此时不发 tmux 信号——双通道并存会让
       // 桌面端会话和 tmux 会话同时续写同一篇稿，draft.md 互相覆盖。
@@ -1300,6 +1399,311 @@ async function saveLeafModal() {
   markSaved();
   $('#statusText').textContent = '叶子档位已保存';
 }
+
+// ---------- 连接点图与时间线（计划五批次 L） ----------
+let linksData = null;      // {version, anchors[], edges[]}
+let selectedAnchor = null; // 图/列表当前高亮的锚点 id
+let linksView = 'list';    // list | graph
+let linksEditing = false;
+let deletedIds = [];       // 编辑会话中的显式删除：合并语义下删除必须显式声明，防旧快照覆盖并发增补
+let deletedEdges = [];
+let changesData = [];
+const KIND_NAMES = { scene: '场景', trait: '角色属性', item: '道具·伏笔', custom: '其他' };
+
+function normalizeAffect(s) {
+  // 计划五 §三：affects 字符串 → 锚点 id。AI 的历史书写习惯（SCENE:X / 角色:A-B / S5-段4）零迁移
+  const t = String(s || '').trim();
+  if (/^SCENE:/.test(t)) return 'scene:' + t.slice(6).trim();
+  if (/^角色:/.test(t)) {
+    const i = t.indexOf('-');
+    return i > 3 ? 'char:' + t.slice(3, i).trim() + ':' + t.slice(i + 1).trim() : 'custom:' + t;
+  }
+  if (/^S\d+-段\d+$/.test(t)) return null;   // 回合定位，不入图，时间线直接展示原文
+  return 'custom:' + t;
+}
+function anchorById(id) { return (linksData && linksData.anchors || []).find(a => a.id === id) || null; }
+function labelOf(id) { const a = anchorById(id); return a ? (a.label || a.id) : id; }  // 幽灵节点显示原始 id
+function anchorDegree(id) { return (linksData && linksData.edges || []).filter(e => e.from === id || e.to === id).length; }
+
+async function loadLinks() {
+  try { linksData = await api('/api/links'); } catch (e) { linksData = null; }
+  if (!linksData || typeof linksData !== 'object' || !Array.isArray(linksData.anchors)) {
+    linksData = { version: 1, anchors: [], edges: [] };
+  }
+  if (!Array.isArray(linksData.edges)) linksData.edges = [];
+  selectedAnchor = null; deletedIds = []; deletedEdges = [];
+  renderLinksList(); renderLinksGraph(); renderEdgeSelects();
+}
+
+function renderLinksList() {
+  const el = $('#linksList');
+  if (!linksData || !linksData.anchors.length) {
+    el.innerHTML = '<div class="lk-empty">还没有锚点——点「⚙ 生成连接点图」让 Hermes 读大纲与稿子生成，或让 AI 在写作中按协议自动沉淀</div>';
+    return;
+  }
+  const groups = {};
+  linksData.anchors.forEach(a => { (groups[a.kind] = groups[a.kind] || []).push(a); });
+  const body = ['scene', 'trait', 'item', 'custom'].filter(k => groups[k] && groups[k].length).map(k =>
+    '<div class="lk-group"><div class="lk-group-name">' + KIND_NAMES[k] + ' · ' + groups[k].length + '</div>' +
+    groups[k].map(a =>
+      '<div class="lk-item' + (selectedAnchor === a.id ? ' on' : '') + '" data-anchor="' + escapeHtml(a.id) + '" title="' + escapeHtml(a.desc || '') + '">' +
+        '<span class="lk-item-label">' + escapeHtml(a.label || a.id) + '</span>' +
+        '<span class="lk-deg">' + anchorDegree(a.id) + '</span>' +
+        (linksEditing ? '<span class="lk-x" data-del="' + escapeHtml(a.id) + '" title="删除锚点">✕</span>' : '') +
+      '</div>'
+    ).join('') + '</div>'
+  ).join('');
+  const edgesHtml = linksData.edges.length ?
+    '<div class="lk-group"><div class="lk-group-name">关系 · ' + linksData.edges.length + '</div>' +
+    linksData.edges.map((e, i) =>
+      '<div class="lk-edge"><span>' + escapeHtml(labelOf(e.from)) + ' → ' + escapeHtml(labelOf(e.to)) +
+      ' <em>(' + escapeHtml(e.rel || '') + ')</em></span>' +
+      (linksEditing ? '<span class="lk-x" data-deledge="' + i + '" title="删除关系">✕</span>' : '') + '</div>'
+    ).join('') + '</div>' : '';
+  el.innerHTML = body + edgesHtml;
+}
+
+function selectAnchor(id) {
+  selectedAnchor = selectedAnchor === id ? null : id;
+  renderLinksList(); renderLinksGraph();
+}
+
+// 三列分层布局（纯函数）：scene 左列 / trait 中列 / item+custom 右列，计划五 §五
+function layoutGraph(nodes) {
+  const cols = { scene: [], trait: [], other: [] };
+  nodes.forEach(a => {
+    const key = a.kind === 'scene' ? 'scene' : a.kind === 'trait' ? 'trait' : 'other';
+    cols[key].push(a);
+  });
+  const COLX = { scene: 16, trait: 226, other: 436 };
+  const W = 150, H = 36, GAP = 12, TOP = 10;
+  const pos = {};
+  for (const k of Object.keys(cols)) {
+    cols[k].sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id), 'zh'));
+    cols[k].forEach((a, i) => { pos[a.id] = { x: COLX[k], y: TOP + i * (H + GAP), w: W, h: H }; });
+  }
+  return pos;
+}
+
+function renderLinksGraph() {
+  const wrap = $('#linksGraph');
+  if (!linksData || !linksData.anchors.length) {
+    wrap.innerHTML = '<div class="lk-empty">图视图为空——先用列表添加锚点，或点「生成连接点图」</div>';
+    return;
+  }
+  if (linksData.anchors.length > 50) {
+    wrap.innerHTML = '<div class="lk-empty">锚点超过 50 个，图视图停用，请用列表视图（计划五 §五 防布局爆炸）</div>';
+    return;
+  }
+  // 幽灵节点：边引用了但图上还没有的锚点（AI 常先写边后补点），虚线渲染
+  const ghosts = [];
+  const have = new Set(linksData.anchors.map(a => a.id));
+  linksData.edges.forEach(e => {
+    [e.from, e.to].forEach(id => {
+      if (!have.has(id) && !ghosts.some(g => g.id === id)) ghosts.push({ id: id, kind: 'custom', label: id, ghost: true });
+    });
+  });
+  const nodes = linksData.anchors.concat(ghosts);
+  const pos = layoutGraph(nodes);
+  const H = Math.max(120, ...nodes.map(n => (pos[n.id] ? pos[n.id].y + pos[n.id].h : 0) + 14));
+  const adj = {};
+  if (selectedAnchor) linksData.edges.forEach(e => {
+    if (e.from === selectedAnchor) adj[e.to] = true;
+    if (e.to === selectedAnchor) adj[e.from] = true;
+  });
+  const edgesSvg = linksData.edges.map(e => {
+    const p1 = pos[e.from], p2 = pos[e.to];
+    if (!p1 || !p2) return '';
+    const x1 = p1.x + p1.w, y1 = p1.y + p1.h / 2, x2 = p2.x, y2 = p2.y + p2.h / 2;
+    const on = selectedAnchor && (e.from === selectedAnchor || e.to === selectedAnchor);
+    const mx = (x1 + x2) / 2;
+    return '<path class="lk-edge-line' + (on ? ' on' : '') + '" d="M' + x1 + ' ' + y1 + ' C ' + mx + ' ' + y1 + ', ' + mx + ' ' + y2 + ', ' + x2 + ' ' + y2 + '"><title>' +
+      escapeHtml(labelOf(e.from) + ' —' + (e.rel || '关联') + '→ ' + labelOf(e.to)) + '</title></path>';
+  }).join('');
+  const nodesSvg = nodes.map(n => {
+    const p = pos[n.id];
+    if (!p) return '';
+    const on = selectedAnchor === n.id || (selectedAnchor && adj[n.id]);
+    const lbl = String(n.label || n.id);
+    const short = lbl.length > 9 ? lbl.slice(0, 8) + '…' : lbl;
+    return '<g class="lk-node' + (n.ghost ? ' ghost' : '') + (on ? ' on' : '') + '" data-anchor="' + escapeHtml(n.id) + '" transform="translate(' + p.x + ',' + p.y + ')">' +
+      '<rect width="' + p.w + '" height="' + p.h + '" rx="9"></rect>' +
+      '<text x="10" y="23">' + escapeHtml(short) + '</text>' +
+      '<title>' + escapeHtml(lbl + (n.ghost ? '（幽灵节点：边引用了但图上还没有这个锚点）' : '')) + '</title></g>';
+  }).join('');
+  wrap.innerHTML = '<svg viewBox="0 0 610 ' + H + '" width="100%">' +
+    '<defs><marker id="lkArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z"></path></marker></defs>' +
+    edgesSvg + nodesSvg + '</svg>';
+}
+
+function switchLinksView(v) {
+  linksView = v;
+  document.querySelectorAll('.lk-vs').forEach(el => el.classList.toggle('on', el.dataset.view === v));
+  $('#linksList').style.display = v === 'list' ? '' : 'none';
+  $('#linksGraph').style.display = v === 'graph' ? '' : 'none';
+}
+
+function toggleLinksEdit() {
+  linksEditing = !linksEditing;
+  $('#lkEditBtn').textContent = linksEditing ? '完成编辑' : '编辑';
+  $('#lkEditPanel').style.display = linksEditing ? '' : 'none';
+  deletedIds = []; deletedEdges = []; lkMsg('');
+  renderLinksList();
+  if (linksEditing) renderEdgeSelects();
+}
+function renderEdgeSelects() {
+  const opts = (linksData && linksData.anchors || []).map(a =>
+    '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.label || a.id) + '</option>').join('');
+  ['#lkFrom', '#lkTo'].forEach(sel => { const el = $(sel); if (el) el.innerHTML = opts; });
+}
+function lkMsg(t) { const el = $('#lkMsg'); if (el) el.textContent = t; }
+function addAnchor() {
+  const label = $('#lkLabel').value.trim();
+  if (!label) { $('#lkLabel').focus(); return; }
+  const kind = $('#lkKind').value;
+  let id;
+  if (kind === 'trait') {
+    const i = label.indexOf('-');
+    id = i > 0 ? 'char:' + label.slice(0, i).trim() + ':' + label.slice(i + 1).trim() : 'char:' + label;
+  } else {
+    id = ({ scene: 'scene:', item: 'item:', custom: 'custom:' })[kind] + label;
+  }
+  const desc = $('#lkDesc').value.trim();
+  const ex = linksData.anchors.find(a => a.id === id);
+  if (ex) { ex.label = label; if (desc) ex.desc = desc; lkMsg('锚点已存在，已更新说明'); }
+  else { linksData.anchors.push({ id: id, kind: kind, label: label, desc: desc }); lkMsg('锚点已加入（点「保存图到服务端」生效）'); }
+  $('#lkLabel').value = ''; $('#lkDesc').value = '';
+  renderLinksList(); renderLinksGraph(); renderEdgeSelects();
+}
+function addEdge() {
+  const from = $('#lkFrom').value, to = $('#lkTo').value;
+  const rel = $('#lkRel').value.trim() || '影响';
+  if (!from || !to) { lkMsg('请先添加锚点'); return; }
+  if (from === to) { lkMsg('关系的两端不能是同一个锚点'); return; }
+  if (linksData.edges.some(e => e.from === from && e.to === to && (e.rel || '') === rel)) { lkMsg('该关系已存在'); return; }
+  linksData.edges.push({ from: from, to: to, rel: rel });
+  $('#lkRel').value = '';
+  lkMsg('关系已加入（点「保存图到服务端」生效）');
+  renderLinksList(); renderLinksGraph();
+}
+async function saveLinksEdit() {
+  const payload = { version: 1, anchors: linksData.anchors, edges: linksData.edges,
+                    delete_ids: deletedIds, delete_edges: deletedEdges };
+  const res = await api('/api/links', 'POST', { links: payload });
+  if (res && res.ok) {
+    lkMsg('已保存：' + res.anchors + ' 锚点 / ' + res.edges + ' 关系');
+    deletedIds = []; deletedEdges = [];
+    await loadLinks();
+  } else {
+    lkMsg('保存失败：' + ((res && (res.detail || res.error)) || '未知错误'));
+  }
+}
+
+// 一键生成（计划五 §4.2）：graph 信号让 Hermes 读大纲/预算/稿子产出初始图
+const GRAPH_PROMPT = '请为本文章生成初始连接点图：读大纲（outline.json）、预算表（plan.json）与现有稿子（draft.md），' +
+  '产出 anchors（scene:名 / char:角色:属性 / item:名 三类）与 edges（rel：影响/伏笔/因果），' +
+  'POST /api/links 写回，可以只发全部条目：{"links":{"version":1,"anchors":[...],"edges":[...]}}，服务端按 id 合并。' +
+  '只写图，不要改正文，不要调用 /api/ai-write。';
+async function sendGraphSignal() {
+  const btn = $('#genGraphBtn');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    await api('/api/signal/continue', 'POST', { text: GRAPH_PROMPT, round: state.round || 0, action: 'graph' });
+    $('#statusText').textContent = '已发出连接点图生成信号（等待注入）';
+    pollContinueAck(Date.now());
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- 语义变化时间线 ----------
+async function loadTimeline() {
+  try { changesData = await api('/api/changes') || []; } catch (e) { changesData = []; }
+  if (!Array.isArray(changesData)) changesData = [];
+  renderTimeline();
+}
+function renderTimeline() {
+  const el = $('#timelineBody');
+  if (!changesData.length) {
+    el.innerHTML = '<div class="lk-empty">暂无语义变化——AI 每回合写完会在这里归纳「什么故事事实变了」，条目可点锚点徽章跳到连接点图</div>';
+    return;
+  }
+  const byRound = {};
+  changesData.forEach(c => { const r = c.round || 0; (byRound[r] = byRound[r] || []).push(c); });
+  const rounds = Object.keys(byRound).map(Number).sort((a, b) => b - a);
+  el.innerHTML = rounds.map((r, idx) => {
+    const items = byRound[r].map(c =>
+      '<div class="tl-item"><div class="tl-what">' + escapeHtml(c.what || '') + '</div>' +
+      (c.affects || []).map(a => {
+        const id = normalizeAffect(a);
+        return id
+          ? '<span class="tl-badge" data-anchor="' + escapeHtml(id) + '" title="在连接点图中高亮：' + escapeHtml(id) + '">' + escapeHtml(a) + '</span>'
+          : '<span class="tl-badge muted">' + escapeHtml(a) + '</span>';
+      }).join('') + '</div>'
+    ).join('');
+    return '<details class="tl-round"' + (idx < 3 ? ' open' : '') + '><summary>第 ' + r + ' 回合 · ' + byRound[r].length + ' 条</summary>' + items + '</details>';
+  }).join('');
+}
+
+// ---------- 建议区（state.advice，计划五 §4.3） ----------
+function renderAdvice() {
+  const el = $('#adviceBody');
+  if (!el) return;
+  const adv = state && state.advice ? String(state.advice) : '';
+  if (!adv) {
+    el.innerHTML = '<div class="lk-empty">暂无 AI 建议——AI 写回牵连已写段落时，连锁修改建议（已写需改 / 未写按新设定写）会出现在这里</div>';
+    return;
+  }
+  const parts = adv.split(/(?=【(?:已写需改|未写按新设定写)】)/);
+  el.innerHTML = parts.map(p => {
+    const m = p.match(/^【(已写需改|未写按新设定写)】/);
+    const cls = m ? (m[1] === '已写需改' ? 'advice-fix' : 'advice-new') : '';
+    return '<div class="advice-sec ' + cls + '">' + escapeHtml(p).replace(/\n/g, '<br>') + '</div>';
+  }).join('');
+}
+
+// 三卡折叠与联动
+function toggleCard(name) {
+  const body = $('#card-' + name + '-body');
+  if (!body) return;
+  const show = body.style.display === 'none';
+  body.style.display = show ? '' : 'none';
+  const arr = document.querySelector('#card-' + name + ' .sc-arrow');
+  if (arr) arr.textContent = show ? '▾' : '▸';
+}
+function openCard(name) {
+  const body = $('#card-' + name + '-body');
+  if (body && body.style.display === 'none') toggleCard(name);
+}
+$('#linksList').addEventListener('click', e => {
+  const del = e.target.closest('.lk-x');
+  if (del) {
+    if (del.dataset.del !== undefined) {
+      const id = del.dataset.del;
+      linksData.anchors = linksData.anchors.filter(a => a.id !== id);
+      deletedIds.push(id);
+    } else if (del.dataset.deledge !== undefined) {
+      const i = parseInt(del.dataset.deledge);
+      const ed = linksData.edges[i];
+      if (ed) { deletedEdges.push({ from: ed.from, to: ed.to, rel: ed.rel || '' }); linksData.edges.splice(i, 1); }
+    }
+    renderLinksList(); renderLinksGraph(); renderEdgeSelects();
+    return;
+  }
+  const item = e.target.closest('.lk-item');
+  if (item) selectAnchor(item.dataset.anchor);
+});
+$('#linksGraph').addEventListener('click', e => {
+  const g = e.target.closest('.lk-node');
+  if (g) selectAnchor(g.dataset.anchor);
+});
+$('#timelineBody').addEventListener('click', e => {
+  const b = e.target.closest('.tl-badge');
+  if (!b || !b.dataset.anchor) return;
+  openCard('links');
+  selectAnchor(b.dataset.anchor);
+});
 
 // ---------- 启动：自动恢复上次进度 ----------
 (async () => {
